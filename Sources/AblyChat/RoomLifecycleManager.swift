@@ -22,7 +22,7 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
         internal var channel: Channel
     }
 
-    internal private(set) var current: RoomLifecycle
+    internal private(set) var status: RoomStatus
     internal private(set) var error: ARTErrorInfo?
 
     private let logger: InternalLogger
@@ -35,7 +35,7 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
         clock: SimpleClock
     ) {
         self.init(
-            current: nil,
+            status: nil,
             contributors: contributors,
             logger: logger,
             clock: clock
@@ -44,13 +44,13 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
 
     #if DEBUG
         internal init(
-            testsOnly_current current: RoomLifecycle? = nil,
+            testsOnly_status status: RoomStatus? = nil,
             contributors: [Contributor],
             logger: InternalLogger,
             clock: SimpleClock
         ) {
             self.init(
-                current: current,
+                status: status,
                 contributors: contributors,
                 logger: logger,
                 clock: clock
@@ -59,12 +59,12 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
     #endif
 
     private init(
-        current: RoomLifecycle?,
+        status: RoomStatus?,
         contributors: [Contributor],
         logger: InternalLogger,
         clock: SimpleClock
     ) {
-        self.current = current ?? .initialized
+        self.status = status ?? .initialized
         self.contributors = contributors
         self.logger = logger
         self.clock = clock
@@ -79,13 +79,13 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
         return subscription
     }
 
-    /// Updates ``current`` and ``error`` and emits a status change event.
-    private func changeStatus(to new: RoomLifecycle, error: ARTErrorInfo? = nil) {
-        logger.log(message: "Transitioning from \(current) to \(new), error \(String(describing: error))", level: .info)
-        let previous = current
-        current = new
+    /// Updates ``status`` and ``error`` and emits a status change event.
+    private func changeStatus(to new: RoomStatus, error: ARTErrorInfo? = nil) {
+        logger.log(message: "Transitioning from \(status) to \(new), error \(String(describing: error))", level: .info)
+        let previous = status
+        status = new
         self.error = error
-        let statusChange = RoomStatusChange(current: current, previous: previous, error: error)
+        let statusChange = RoomStatusChange(current: status, previous: previous, error: error)
         emitStatusChange(statusChange)
     }
 
@@ -97,7 +97,7 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
 
     /// Implements CHA-RL1’s `ATTACH` operation.
     internal func performAttachOperation() async throws {
-        switch current {
+        switch status {
         case .attached:
             // CHA-RL1a
             return
@@ -171,7 +171,7 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
 
     /// Implements CHA-RL2’s DETACH operation.
     internal func performDetachOperation() async throws {
-        switch current {
+        switch status {
         case .detached:
             // CHA-RL2a
             return
@@ -217,7 +217,7 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
                     }
 
                     // This check is CHA-RL2h2
-                    if current != .failed {
+                    if status != .failed {
                         changeStatus(to: .failed, error: error)
                     }
                 default:
@@ -250,7 +250,7 @@ internal actor RoomLifecycleManager<Channel: RoomLifecycleContributorChannel> {
 
     /// Implementes CHA-RL3’s RELEASE operation.
     internal func performReleaseOperation() async {
-        switch current {
+        switch status {
         case .released:
             // CHA-RL3a
             return

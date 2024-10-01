@@ -1,17 +1,17 @@
 import Ably
 
 public protocol Connection: AnyObject, Sendable {
-    var status: any ConnectionStatus { get }
+    var lifecycle: any ConnectionLifecycle { get }
 }
 
-public protocol ConnectionStatus: AnyObject, Sendable {
-    var current: ConnectionLifecycle { get }
+public protocol ConnectionLifecycle: AnyObject, Sendable {
+    var status: ConnectionStatus { get }
     // TODO: (https://github.com/ably-labs/ably-chat-swift/issues/12): consider how to avoid the need for an unwrap
     var error: ARTErrorInfo? { get }
     func onChange(bufferingPolicy: BufferingPolicy) -> Subscription<ConnectionStatusChange>
 }
 
-public enum ConnectionLifecycle: Sendable {
+public enum ConnectionStatus: Sendable {
     case initialized
     case connecting
     case connected
@@ -21,13 +21,13 @@ public enum ConnectionLifecycle: Sendable {
 }
 
 public struct ConnectionStatusChange: Sendable {
-    public var current: ConnectionLifecycle
-    public var previous: ConnectionLifecycle
+    public var current: ConnectionStatus
+    public var previous: ConnectionStatus
     // TODO: (https://github.com/ably-labs/ably-chat-swift/issues/12): consider how to avoid the need for an unwrap
     public var error: ARTErrorInfo?
     public var retryIn: TimeInterval
 
-    public init(current: ConnectionLifecycle, previous: ConnectionLifecycle, error: ARTErrorInfo? = nil, retryIn: TimeInterval) {
+    public init(current: ConnectionStatus, previous: ConnectionStatus, error: ARTErrorInfo? = nil, retryIn: TimeInterval) {
         self.current = current
         self.previous = previous
         self.error = error

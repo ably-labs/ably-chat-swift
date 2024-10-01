@@ -11,7 +11,7 @@ public protocol Room: AnyObject, Sendable {
     var typing: any Typing { get }
     // To access this property if occupancy is not enabled for the room is a programmer error, and will lead to `fatalError` being called.
     var occupancy: any Occupancy { get }
-    var status: any RoomStatus { get }
+    var lifecycle: any RoomLifecycle { get }
     func attach() async throws
     func detach() async throws
     var options: RoomOptions { get }
@@ -30,7 +30,7 @@ internal actor DefaultRoom: Room {
         }
     #endif
 
-    private let _status: DefaultRoomStatus
+    private let _lifecycle: DefaultRoomLifecycle
     private let logger: InternalLogger
 
     internal init(realtime: RealtimeClient, roomID: String, options: RoomOptions, logger: InternalLogger) {
@@ -38,7 +38,7 @@ internal actor DefaultRoom: Room {
         self.roomID = roomID
         self.options = options
         self.logger = logger
-        _status = .init(logger: logger)
+        _lifecycle = .init(logger: logger)
     }
 
     public nonisolated var messages: any Messages {
@@ -61,8 +61,8 @@ internal actor DefaultRoom: Room {
         fatalError("Not yet implemented")
     }
 
-    internal nonisolated var status: any RoomStatus {
-        _status
+    internal nonisolated var lifecycle: any RoomLifecycle {
+        _lifecycle
     }
 
     /// Fetches the channels that contribute to this room.
@@ -85,7 +85,7 @@ internal actor DefaultRoom: Room {
                 throw error
             }
         }
-        await _status.transition(to: .attached)
+        await _lifecycle.transition(to: .attached)
     }
 
     public func detach() async throws {
@@ -97,6 +97,6 @@ internal actor DefaultRoom: Room {
                 throw error
             }
         }
-        await _status.transition(to: .detached)
+        await _lifecycle.transition(to: .detached)
     }
 }

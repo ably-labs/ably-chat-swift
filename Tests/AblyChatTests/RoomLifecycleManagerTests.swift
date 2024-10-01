@@ -28,12 +28,12 @@ struct RoomLifecycleManagerTests {
     }
 
     private func createManager(
-        forTestingWhatHappensWhenCurrentlyIn current: RoomLifecycle? = nil,
+        forTestingWhatHappensWhenCurrentlyIn status: RoomStatus? = nil,
         contributors: [RoomLifecycleManager<MockRoomLifecycleContributorChannel>.Contributor] = [],
         clock: SimpleClock = MockSimpleClock()
     ) -> RoomLifecycleManager<MockRoomLifecycleContributorChannel> {
         .init(
-            testsOnly_current: current,
+            testsOnly_status: status,
             contributors: contributors,
             logger: TestLogger(),
             clock: clock
@@ -61,10 +61,10 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RS2a
     // @spec CHA-RS3
     @Test
-    func current_startsAsInitialized() async {
+    func status_startsAsInitialized() async {
         let manager = createManager()
 
-        #expect(await manager.current == .initialized)
+        #expect(await manager.status == .initialized)
     }
 
     @Test
@@ -79,7 +79,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL1a
     @Test
     func attach_whenAlreadyAttached() async throws {
-        // Given: A RoomLifecycleManager in the ATTACHED state
+        // Given: A RoomLifecycleManager in the ATTACHED status
         let contributor = createContributor()
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .attached, contributors: [contributor])
 
@@ -93,7 +93,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL1b
     @Test
     func attach_whenReleasing() async throws {
-        // Given: A RoomLifecycleManager in the RELEASING state
+        // Given: A RoomLifecycleManager in the RELEASING status
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .releasing)
 
         // When: `performAttachOperation()` is called on the lifecycle manager
@@ -108,7 +108,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL1c
     @Test
     func attach_whenReleased() async throws {
-        // Given: A RoomLifecycleManager in the RELEASED state
+        // Given: A RoomLifecycleManager in the RELEASED status
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .released)
 
         // When: `performAttachOperation()` is called on the lifecycle manager
@@ -123,7 +123,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL1e
     @Test
     func attach_transitionsToAttaching() async throws {
-        // Given: A RoomLifecycleManager, with a contributor on whom calling `attach()` will not complete until after the "Then" part of this test (the motivation for this is to suppress the room from transitioning to ATTACHED, so that we can assert its current state as being ATTACHING)
+        // Given: A RoomLifecycleManager, with a contributor on whom calling `attach()` will not complete until after the "Then" part of this test (the motivation for this is to suppress the room from transitioning to ATTACHED, so that we can assert its current status as being ATTACHING)
         let contributorAttachOperation = SignallableChannelOperation()
 
         let manager = createManager(contributors: [createContributor(attachBehavior: contributorAttachOperation.behavior)])
@@ -133,12 +133,12 @@ struct RoomLifecycleManagerTests {
         // When: `performAttachOperation()` is called on the lifecycle manager
         async let _ = try await manager.performAttachOperation()
 
-        // Then: It emits a status change to ATTACHING, and its current state is ATTACHING
+        // Then: It emits a status change to ATTACHING, and its current status is ATTACHING
         #expect(try #require(await statusChange).current == .attaching)
 
-        #expect(await manager.current == .attaching)
+        #expect(await manager.status == .attaching)
 
-        // Post-test: Now that we’ve seen the ATTACHING state, allow the contributor `attach` call to complete
+        // Post-test: Now that we’ve seen the ATTACHING status, allow the contributor `attach` call to complete
         contributorAttachOperation.complete(result: .success)
     }
 
@@ -156,13 +156,13 @@ struct RoomLifecycleManagerTests {
         // When: `performAttachOperation()` is called on the lifecycle manager
         try await manager.performAttachOperation()
 
-        // Then: It calls `attach` on all the contributors, the room attach operation succeeds, it emits a status change to ATTACHED, and its current state is ATTACHED
+        // Then: It calls `attach` on all the contributors, the room attach operation succeeds, it emits a status change to ATTACHED, and its current status is ATTACHED
         for contributor in contributors {
             #expect(await contributor.channel.attachCallCount > 0)
         }
 
         _ = try #require(await attachedStatusChange, "Expected status change to ATTACHED")
-        try #require(await manager.current == .attached)
+        try #require(await manager.status == .attached)
     }
 
     // @spec CHA-RL1h2
@@ -190,12 +190,12 @@ struct RoomLifecycleManagerTests {
 
         // Then:
         //
-        // 1. the room status transitions to SUSPENDED, with the state change’s `error` having the AttachmentFailed code corresponding to the feature of the failed contributor, `cause` equal to the error thrown by the contributor `attach` call
+        // 1. the room status transitions to SUSPENDED, with the status change’s `error` having the AttachmentFailed code corresponding to the feature of the failed contributor, `cause` equal to the error thrown by the contributor `attach` call
         // 2. the manager’s `error` is set to this same error
         // 3. the room attach operation fails with this same error
         let suspendedStatusChange = try #require(await maybeSuspendedStatusChange)
 
-        #expect(await manager.current == .suspended)
+        #expect(await manager.status == .suspended)
 
         var roomAttachError: Error?
         do {
@@ -240,12 +240,12 @@ struct RoomLifecycleManagerTests {
         async let roomAttachResult: Void = manager.performAttachOperation()
 
         // Then:
-        // 1. the room status transitions to FAILED, with the state change’s `error` having the AttachmentFailed code corresponding to the feature of the failed contributor, `cause` equal to the error thrown by the contributor `attach` call
+        // 1. the room status transitions to FAILED, with the status change’s `error` having the AttachmentFailed code corresponding to the feature of the failed contributor, `cause` equal to the error thrown by the contributor `attach` call
         // 2. the manager’s `error` is set to this same error
         // 3. the room attach operation fails with this same error
         let failedStatusChange = try #require(await maybeFailedStatusChange)
 
-        #expect(await manager.current == .failed)
+        #expect(await manager.status == .failed)
 
         var roomAttachError: Error?
         do {
@@ -338,7 +338,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL2a
     @Test
     func detach_whenAlreadyDetached() async throws {
-        // Given: A RoomLifecycleManager in the DETACHED state
+        // Given: A RoomLifecycleManager in the DETACHED status
         let contributor = createContributor()
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .detached, contributors: [contributor])
 
@@ -352,7 +352,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL2b
     @Test
     func detach_whenReleasing() async throws {
-        // Given: A RoomLifecycleManager in the RELEASING state
+        // Given: A RoomLifecycleManager in the RELEASING status
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .releasing)
 
         // When: `performDetachOperation()` is called on the lifecycle manager
@@ -367,7 +367,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL2c
     @Test
     func detach_whenReleased() async throws {
-        // Given: A RoomLifecycleManager in the RELEASED state
+        // Given: A RoomLifecycleManager in the RELEASED status
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .released)
 
         // When: `performAttachOperation()` is called on the lifecycle manager
@@ -382,7 +382,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL2d
     @Test
     func detach_whenFailed() async throws {
-        // Given: A RoomLifecycleManager in the FAILED state
+        // Given: A RoomLifecycleManager in the FAILED status
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .failed)
 
         // When: `performAttachOperation()` is called on the lifecycle manager
@@ -397,7 +397,7 @@ struct RoomLifecycleManagerTests {
     // @specPartial CHA-RL2e - Haven’t implemented the part that refers to "transient disconnect timeouts"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/48)
     @Test
     func detach_transitionsToDetaching() async throws {
-        // Given: A RoomLifecycleManager, with a contributor on whom calling `detach()` will not complete until after the "Then" part of this test (the motivation for this is to suppress the room from transitioning to DETACHED, so that we can assert its current state as being DETACHING)
+        // Given: A RoomLifecycleManager, with a contributor on whom calling `detach()` will not complete until after the "Then" part of this test (the motivation for this is to suppress the room from transitioning to DETACHED, so that we can assert its current status as being DETACHING)
         let contributorDetachOperation = SignallableChannelOperation()
 
         let manager = createManager(contributors: [createContributor(detachBehavior: contributorDetachOperation.behavior)])
@@ -407,11 +407,11 @@ struct RoomLifecycleManagerTests {
         // When: `performDetachOperation()` is called on the lifecycle manager
         async let _ = try await manager.performDetachOperation()
 
-        // Then: It emits a status change to DETACHING, and its current state is DETACHING
+        // Then: It emits a status change to DETACHING, and its current status is DETACHING
         #expect(try #require(await statusChange).current == .detaching)
-        #expect(await manager.current == .detaching)
+        #expect(await manager.status == .detaching)
 
-        // Post-test: Now that we’ve seen the DETACHING state, allow the contributor `detach` call to complete
+        // Post-test: Now that we’ve seen the DETACHING status, allow the contributor `detach` call to complete
         contributorDetachOperation.complete(result: .success)
     }
 
@@ -429,13 +429,13 @@ struct RoomLifecycleManagerTests {
         // When: `performDetachOperation()` is called on the lifecycle manager
         try await manager.performDetachOperation()
 
-        // Then: It calls `detach` on all the contributors, the room detach operation succeeds, it emits a status change to DETACHED, and its current state is DETACHED
+        // Then: It calls `detach` on all the contributors, the room detach operation succeeds, it emits a status change to DETACHED, and its current status is DETACHED
         for contributor in contributors {
             #expect(await contributor.channel.detachCallCount > 0)
         }
 
         _ = try #require(await detachedStatusChange, "Expected status change to DETACHED")
-        #expect(await manager.current == .detached)
+        #expect(await manager.status == .detached)
     }
 
     // @spec CHA-RL2h1
@@ -474,7 +474,7 @@ struct RoomLifecycleManagerTests {
 
         // Then: It:
         // - calls `detach` on all of the contributors
-        // - emits a state change to FAILED and the call to `performDetachOperation()` fails; the error associated with the state change and the `performDetachOperation()` has the *DetachmentFailed code corresponding to contributor 1’s feature, and its `cause` is contributor 1’s `errorReason` (contributor 1 because it’s the "first feature to fail" as the spec says)
+        // - emits a status change to FAILED and the call to `performDetachOperation()` fails; the error associated with the status change and the `performDetachOperation()` has the *DetachmentFailed code corresponding to contributor 1’s feature, and its `cause` is contributor 1’s `errorReason` (contributor 1 because it’s the "first feature to fail" as the spec says)
         // TODO: Understand whether it’s `errorReason` or the contributor `detach` thrown error that’s meant to be use (outstanding question https://github.com/ably/specification/pull/200/files#r1763792152)
         for contributor in contributors {
             #expect(await contributor.channel.detachCallCount > 0)
@@ -487,7 +487,7 @@ struct RoomLifecycleManagerTests {
         }
     }
 
-    // @specUntested CHA-RL2h2 - I was unable to find a way to test this spec point in an environment in which concurrency is being used; there is no obvious moment at which to stop observing the emitted state changes in order to be sure that FAILED has not been emitted twice.
+    // @specUntested CHA-RL2h2 - I was unable to find a way to test this spec point in an environment in which concurrency is being used; there is no obvious moment at which to stop observing the emitted status changes in order to be sure that FAILED has not been emitted twice.
 
     // @spec CHA-RL2h3
     @Test
@@ -527,7 +527,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL3a
     @Test
     func release_whenAlreadyReleased() async {
-        // Given: A RoomLifecycleManager in the RELEASED state
+        // Given: A RoomLifecycleManager in the RELEASED status
         let contributor = createContributor()
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .released, contributors: [contributor])
 
@@ -541,7 +541,7 @@ struct RoomLifecycleManagerTests {
     // @spec CHA-RL3b
     @Test
     func release_whenDetached() async throws {
-        // Given: A RoomLifecycleManager in the DETACHED state
+        // Given: A RoomLifecycleManager in the DETACHED status
         let contributor = createContributor()
         let manager = createManager(forTestingWhatHappensWhenCurrentlyIn: .detached, contributors: [contributor])
 
@@ -553,14 +553,14 @@ struct RoomLifecycleManagerTests {
 
         // Then: The room release operation succeeds, the room transitions to RELEASED, and no attempt is made to detach a contributor (which we’ll consider as satisfying the spec’s requirement that the transition be "immediate")
         #expect(try #require(await statusChange).current == .released)
-        #expect(await manager.current == .released)
+        #expect(await manager.status == .released)
         #expect(await contributor.channel.detachCallCount == 0)
     }
 
     // @specPartial CHA-RL3c - Haven’t implemented the part that refers to "transient disconnect timeouts"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/48)
     @Test
     func release_transitionsToReleasing() async throws {
-        // Given: A RoomLifecycleManager, with a contributor on whom calling `detach()` will not complete until after the "Then" part of this test (the motivation for this is to suppress the room from transitioning to RELEASED, so that we can assert its current state as being RELEASING)
+        // Given: A RoomLifecycleManager, with a contributor on whom calling `detach()` will not complete until after the "Then" part of this test (the motivation for this is to suppress the room from transitioning to RELEASED, so that we can assert its current status as being RELEASING)
         let contributorDetachOperation = SignallableChannelOperation()
 
         let manager = createManager(contributors: [createContributor(detachBehavior: contributorDetachOperation.behavior)])
@@ -570,11 +570,11 @@ struct RoomLifecycleManagerTests {
         // When: `performReleaseOperation()` is called on the lifecycle manager
         async let _ = await manager.performReleaseOperation()
 
-        // Then: It emits a status change to RELEASING, and its current state is RELEASING
+        // Then: It emits a status change to RELEASING, and its current status is RELEASING
         #expect(try #require(await statusChange).current == .releasing)
-        #expect(await manager.current == .releasing)
+        #expect(await manager.status == .releasing)
 
-        // Post-test: Now that we’ve seen the RELEASING state, allow the contributor `detach` call to complete
+        // Post-test: Now that we’ve seen the RELEASING status, allow the contributor `detach` call to complete
         contributorDetachOperation.complete(result: .success)
     }
 
@@ -614,7 +614,7 @@ struct RoomLifecycleManagerTests {
 
         _ = await releasedStatusChange
 
-        #expect(await manager.current == .released)
+        #expect(await manager.status == .released)
     }
 
     // @spec CHA-RL3f
@@ -673,6 +673,6 @@ struct RoomLifecycleManagerTests {
 
         _ = await releasedStatusChange
 
-        #expect(await manager.current == .released)
+        #expect(await manager.status == .released)
     }
 }

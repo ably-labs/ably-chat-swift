@@ -19,7 +19,7 @@ struct DefaultRoomTests {
         let realtime = MockRealtime.create(channels: channels)
         let room = DefaultRoom(realtime: realtime, roomID: "basketball", options: .init(), logger: TestLogger())
 
-        let subscription = await room.status.onChange(bufferingPolicy: .unbounded)
+        let subscription = await room.lifecycle.onChange(bufferingPolicy: .unbounded)
         async let attachedStatusChange = subscription.first { $0.current == .attached }
 
         // When: `attach` is called on the room
@@ -30,7 +30,7 @@ struct DefaultRoomTests {
             #expect(channel.attachCallCounter.isNonZero)
         }
 
-        #expect(await room.status.current == .attached)
+        #expect(await room.lifecycle.status == .attached)
         #expect(try #require(await attachedStatusChange).current == .attached)
     }
 
@@ -81,7 +81,7 @@ struct DefaultRoomTests {
         let realtime = MockRealtime.create(channels: channels)
         let room = DefaultRoom(realtime: realtime, roomID: "basketball", options: .init(), logger: TestLogger())
 
-        let subscription = await room.status.onChange(bufferingPolicy: .unbounded)
+        let subscription = await room.lifecycle.onChange(bufferingPolicy: .unbounded)
         async let detachedStatusChange = subscription.first { $0.current == .detached }
 
         // When: `detach` is called on the room
@@ -92,7 +92,7 @@ struct DefaultRoomTests {
             #expect(channel.detachCallCounter.isNonZero)
         }
 
-        #expect(await room.status.current == .detached)
+        #expect(await room.lifecycle.status == .detached)
         #expect(try #require(await detachedStatusChange).current == .detached)
     }
 
