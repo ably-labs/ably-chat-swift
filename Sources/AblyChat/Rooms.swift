@@ -8,6 +8,7 @@ public protocol Rooms: AnyObject, Sendable {
 
 internal actor DefaultRooms: Rooms {
     private nonisolated let realtime: RealtimeClient
+    private let chatAPI: ChatAPI
 
     #if DEBUG
         internal nonisolated var testsOnly_realtime: RealtimeClient {
@@ -26,6 +27,7 @@ internal actor DefaultRooms: Rooms {
         self.realtime = realtime
         self.clientOptions = clientOptions
         self.logger = logger
+        chatAPI = ChatAPI(realtime: realtime)
     }
 
     internal func get(roomID: String, options: RoomOptions) throws -> any Room {
@@ -39,7 +41,7 @@ internal actor DefaultRooms: Rooms {
 
             return existingRoom
         } else {
-            let room = DefaultRoom(realtime: realtime, roomID: roomID, options: options, logger: logger)
+            let room = DefaultRoom(realtime: realtime, chatAPI: chatAPI, roomID: roomID, options: options, logger: logger)
             rooms[roomID] = room
             return room
         }

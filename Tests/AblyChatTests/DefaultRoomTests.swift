@@ -17,7 +17,7 @@ struct DefaultRoomTests {
         ]
         let channels = MockChannels(channels: channelsList)
         let realtime = MockRealtime.create(channels: channels)
-        let room = DefaultRoom(realtime: realtime, roomID: "basketball", options: .init(), logger: TestLogger())
+        let room = DefaultRoom(realtime: realtime, chatAPI: ChatAPI(realtime: realtime), roomID: "basketball", options: .init(), logger: TestLogger())
 
         let subscription = await room.status.onChange(bufferingPolicy: .unbounded)
         async let attachedStatusChange = subscription.first { $0.current == .attached }
@@ -50,7 +50,7 @@ struct DefaultRoomTests {
         ]
         let channels = MockChannels(channels: channelsList)
         let realtime = MockRealtime.create(channels: channels)
-        let room = DefaultRoom(realtime: realtime, roomID: "basketball", options: .init(), logger: TestLogger())
+        let room = DefaultRoom(realtime: realtime, chatAPI: ChatAPI(realtime: realtime), roomID: "basketball", options: .init(), logger: TestLogger())
 
         // When: `attach` is called on the room
         let roomAttachError: Error?
@@ -79,7 +79,7 @@ struct DefaultRoomTests {
         ]
         let channels = MockChannels(channels: channelsList)
         let realtime = MockRealtime.create(channels: channels)
-        let room = DefaultRoom(realtime: realtime, roomID: "basketball", options: .init(), logger: TestLogger())
+        let room = DefaultRoom(realtime: realtime, chatAPI: ChatAPI(realtime: realtime), roomID: "basketball", options: .init(), logger: TestLogger())
 
         let subscription = await room.status.onChange(bufferingPolicy: .unbounded)
         async let detachedStatusChange = subscription.first { $0.current == .detached }
@@ -112,7 +112,7 @@ struct DefaultRoomTests {
         ]
         let channels = MockChannels(channels: channelsList)
         let realtime = MockRealtime.create(channels: channels)
-        let room = DefaultRoom(realtime: realtime, roomID: "basketball", options: .init(), logger: TestLogger())
+        let room = DefaultRoom(realtime: realtime, chatAPI: ChatAPI(realtime: realtime), roomID: "basketball", options: .init(), logger: TestLogger())
 
         // When: `detach` is called on the room
         let roomDetachError: Error?

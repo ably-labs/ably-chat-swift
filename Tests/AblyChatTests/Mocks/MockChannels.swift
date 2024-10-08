@@ -16,6 +16,10 @@ final class MockChannels: RealtimeChannelsProtocol, Sendable {
         return channel
     }
 
+    func get(_ name: String, options _: ARTRealtimeChannelOptions) -> MockRealtimeChannel {
+        get(name)
+    }
+
     func exists(_: String) -> Bool {
         fatalError("Not implemented")
     }

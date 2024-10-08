@@ -6,7 +6,7 @@ public protocol Occupancy: AnyObject, Sendable, EmitsDiscontinuities {
     var channel: RealtimeChannelProtocol { get }
 }
 
-public struct OccupancyEvent: Sendable {
+public struct OccupancyEvent: Sendable, Encodable, Decodable {
     public var connections: Int
     public var presenceMembers: Int
 

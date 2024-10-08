@@ -32,7 +32,7 @@ struct MessageSubscriptionTests {
 
     @Test
     func emit() async {
-        let subscription = MessageSubscription(bufferingPolicy: .unbounded)
+        let subscription = MessageSubscription(bufferingPolicy: .unbounded) { _ in fatalError("Not implemented") }
 
         async let emittedElements = Array(subscription.prefix(2))
 

@@ -1,8 +1,13 @@
 import Ably
 import AblyChat
 
+// swiftlint:disable:next line_length
 /// A mock implementation of `RealtimeClientProtocol`. It only exists so that we can construct an instance of `DefaultChatClient` without needing to create a proper `ARTRealtime` instance (which we can’t yet do because we don’t have a method for inserting an API key into the example app). TODO remove this once we start building the example app
 final class MockRealtime: NSObject, RealtimeClientProtocol, Sendable {
+    func request(_: String, path _: String, params _: [String: String]?, body _: Any?, headers _: [String: String]?, callback _: @escaping ARTHTTPPaginatedCallback) throws {
+        fatalError("not implemented")
+    }
+
     var device: ARTLocalDevice {
         fatalError("Not implemented")
     }
@@ -14,6 +19,10 @@ final class MockRealtime: NSObject, RealtimeClientProtocol, Sendable {
     let channels = Channels()
 
     final class Channels: RealtimeChannelsProtocol {
+        func get(_: String, options _: ARTRealtimeChannelOptions) -> MockRealtime.Channel {
+            fatalError("Not implemented")
+        }
+
         func get(_: String) -> Channel {
             fatalError("Not implemented")
         }
@@ -32,6 +41,10 @@ final class MockRealtime: NSObject, RealtimeClientProtocol, Sendable {
     }
 
     final class Channel: RealtimeChannelProtocol {
+        var properties: ARTChannelProperties { .init() }
+
+        init() {}
+
         var state: ARTRealtimeChannelState {
             fatalError("Not implemented")
         }

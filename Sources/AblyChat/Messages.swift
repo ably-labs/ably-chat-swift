@@ -1,7 +1,7 @@
 import Ably
 
 public protocol Messages: AnyObject, Sendable, EmitsDiscontinuities {
-    func subscribe(bufferingPolicy: BufferingPolicy) async -> MessageSubscription
+    func subscribe(bufferingPolicy: BufferingPolicy) async throws -> MessageSubscription
     func get(options: QueryOptions) async throws -> any PaginatedResult<Message>
     func send(params: SendMessageParams) async throws -> Message
     var channel: RealtimeChannelProtocol { get }
@@ -19,6 +19,7 @@ public struct SendMessageParams: Sendable {
     }
 }
 
+// TODO: Start and End can be Dates in Swift so should be... will revisit this to properly convert from a timeserial represented as an Int to a Date and back. https://github.com/ably-labs/ably-chat-swift/issues/78
 public struct QueryOptions: Sendable {
     public enum ResultOrder: Sendable {
         case oldestFirst
@@ -26,11 +27,14 @@ public struct QueryOptions: Sendable {
     }
 
     public var start: Date?
-    public var end: Date?
+    public var end: Int? // represented as timeserial, represented as a number in JS.
     public var limit: Int?
     public var orderBy: ResultOrder?
 
-    public init(start: Date? = nil, end: Date? = nil, limit: Int? = nil, orderBy: QueryOptions.ResultOrder? = nil) {
+    // (CHA-M5g) The subscribers subscription point must be additionally specified (internally, by us) in the fromSerial query parameter.
+    internal var fromSerial: String?
+
+    public init(start: Date? = nil, end: Int? = nil, limit: Int? = nil, orderBy: QueryOptions.ResultOrder? = nil) {
         self.start = start
         self.end = end
         self.limit = limit
@@ -38,15 +42,35 @@ public struct QueryOptions: Sendable {
     }
 }
 
-public struct QueryOptionsWithoutDirection: Sendable {
-    public var start: Date?
-    public var end: Date?
-    public var limit: Int?
+public extension QueryOptions {
+    func toDictionary() -> [String: String] {
+        var dict: [String: String] = [:]
+        if let start {
+            dict["start"] = "\(start)"
+        }
 
-    public init(start: Date? = nil, end: Date? = nil, limit: Int? = nil) {
-        self.start = start
-        self.end = end
-        self.limit = limit
+        if let end {
+            dict["end"] = "\(end)"
+        }
+
+        if let limit {
+            dict["limit"] = "\(limit)"
+        }
+
+        if let orderBy {
+            switch orderBy {
+            case .oldestFirst:
+                dict["direction"] = "forwards"
+            case .newestFirst:
+                dict["direction"] = "backwards"
+            }
+        }
+
+        if let fromSerial {
+            dict["fromSerial"] = fromSerial
+        }
+
+        return dict
     }
 }
 
@@ -56,26 +80,30 @@ public struct MessageSubscription: Sendable, AsyncSequence {
 
     private var subscription: Subscription<Element>
 
-    private var mockGetPreviousMessages: (@Sendable (QueryOptionsWithoutDirection) async throws -> any PaginatedResult<Message>)?
+    // can be set by either initialiser
+    private let getPreviousMessages: @Sendable (QueryOptions) async throws -> any PaginatedResult<Message>
 
-    internal init(bufferingPolicy: BufferingPolicy) {
+    // used internally
+    internal init(
+        bufferingPolicy: BufferingPolicy,
+        getPreviousMessages: @escaping @Sendable (QueryOptions) async throws -> any PaginatedResult<Message>
+    ) {
         subscription = .init(bufferingPolicy: bufferingPolicy)
+        self.getPreviousMessages = getPreviousMessages
     }
 
-    public init<T: AsyncSequence & Sendable>(mockAsyncSequence: T, mockGetPreviousMessages: @escaping @Sendable (QueryOptionsWithoutDirection) async throws -> any PaginatedResult<Message>) where T.Element == Element {
+    // used for testing
+    public init<T: AsyncSequence & Sendable>(mockAsyncSequence: T, mockGetPreviousMessages: @escaping @Sendable (QueryOptions) async throws -> any PaginatedResult<Message>) where T.Element == Element {
         subscription = .init(mockAsyncSequence: mockAsyncSequence)
-        self.mockGetPreviousMessages = mockGetPreviousMessages
+        getPreviousMessages = mockGetPreviousMessages
     }
 
     internal func emit(_ element: Element) {
         subscription.emit(element)
     }
 
-    public func getPreviousMessages(params: QueryOptionsWithoutDirection) async throws -> any PaginatedResult<Message> {
-        guard let mockImplementation = mockGetPreviousMessages else {
-            fatalError("Not yet implemented")
-        }
-        return try await mockImplementation(params)
+    public func getPreviousMessages(params: QueryOptions) async throws -> any PaginatedResult<Message> {
+        try await getPreviousMessages(params)
     }
 
     public struct AsyncIterator: AsyncIteratorProtocol {
