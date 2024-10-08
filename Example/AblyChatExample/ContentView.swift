@@ -126,7 +126,7 @@ struct ContentView: View {
     func showMessages() async throws {
         for await message in try await room().messages.subscribe(bufferingPolicy: .unbounded) {
             withAnimation {
-                messages.insert(BasicListItem(id: message.timeserial, title: message.clientID, text: message.text), at: 0)
+                messages.insert(BasicListItem(id: message.timeserial, title: message.clientID ?? "Anonymous", text: message.text), at: 0)
             }
         }
     }

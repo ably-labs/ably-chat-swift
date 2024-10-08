@@ -1,8 +1,8 @@
 import Foundation
 
-public enum HeadersValue: Sendable {
+public enum HeadersValue: Sendable, Codable, Hashable {
     case string(String)
-    case number(NSNumber)
+    case number(Int)
     case bool(Bool)
     case null
 }

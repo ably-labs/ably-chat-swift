@@ -2,6 +2,8 @@ import Ably
 import AblyChat
 
 final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
+    var properties: ARTChannelProperties { .init() }
+
     private let _name: String?
 
     init(
@@ -141,7 +143,7 @@ final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
     }
 
     func on(_: ARTChannelEvent, callback _: @escaping (ARTChannelStateChange) -> Void) -> ARTEventListener {
-        fatalError("Not implemented")
+        ARTEventListener()
     }
 
     func on(_: @escaping (ARTChannelStateChange) -> Void) -> ARTEventListener {

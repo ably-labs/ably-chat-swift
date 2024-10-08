@@ -6,7 +6,7 @@ struct DefaultRoomsTests {
     @Test
     func get_returnsRoomWithGivenID() async throws {
         // Given: an instance of DefaultRooms
-        let realtime = MockRealtime.create()
+        let realtime = MockRealtime.create(channels: .init(channels: [.init(name: "basketball::$chat::$chatMessages")]))
         let rooms = DefaultRooms(realtime: realtime, clientOptions: .init(), logger: TestLogger())
 
         // When: get(roomID:options:) is called
@@ -25,7 +25,7 @@ struct DefaultRoomsTests {
     @Test
     func get_returnsExistingRoomWithGivenID() async throws {
         // Given: an instance of DefaultRooms, on which get(roomID:options:) has already been called with a given ID
-        let realtime = MockRealtime.create()
+        let realtime = MockRealtime.create(channels: .init(channels: [.init(name: "basketball::$chat::$chatMessages")]))
         let rooms = DefaultRooms(realtime: realtime, clientOptions: .init(), logger: TestLogger())
 
         let roomID = "basketball"
@@ -43,7 +43,7 @@ struct DefaultRoomsTests {
     @Test
     func get_throwsErrorWhenOptionsDoNotMatch() async throws {
         // Given: an instance of DefaultRooms, on which get(roomID:options:) has already been called with a given ID and options
-        let realtime = MockRealtime.create()
+        let realtime = MockRealtime.create(channels: .init(channels: [.init(name: "basketball::$chat::$chatMessages")]))
         let rooms = DefaultRooms(realtime: realtime, clientOptions: .init(), logger: TestLogger())
 
         let roomID = "basketball"

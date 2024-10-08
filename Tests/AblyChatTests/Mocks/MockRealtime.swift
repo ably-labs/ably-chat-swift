@@ -9,7 +9,7 @@ final class MockRealtime: NSObject, RealtimeClientProtocol, Sendable {
     }
 
     var clientId: String? {
-        fatalError("Not implemented")
+        "mockClientId"
     }
 
     required init(options _: ARTClientOptions) {
@@ -60,6 +60,10 @@ final class MockRealtime: NSObject, RealtimeClientProtocol, Sendable {
     }
 
     func close() {
+        fatalError("Not implemented")
+    }
+
+    func request(_: String, path _: String, params _: [String: String]?, body _: Any?, headers _: [String: String]?, callback _: @escaping ARTHTTPPaginatedCallback) throws {
         fatalError("Not implemented")
     }
 }
