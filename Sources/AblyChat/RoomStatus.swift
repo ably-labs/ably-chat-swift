@@ -2,33 +2,107 @@ import Ably
 
 public protocol RoomStatus: AnyObject, Sendable {
     var current: RoomLifecycle { get async }
-    // TODO: (https://github.com/ably-labs/ably-chat-swift/issues/12): consider how to avoid the need for an unwrap
-    var error: ARTErrorInfo? { get async }
     func onChange(bufferingPolicy: BufferingPolicy) async -> Subscription<RoomStatusChange>
 }
 
-public enum RoomLifecycle: Sendable {
+public enum RoomLifecycle: Sendable, Equatable {
     case initialized
     case attaching
     case attached
     case detaching
     case detached
-    case suspended
-    case failed
+    case suspended(error: ARTErrorInfo)
+    case failed(error: ARTErrorInfo)
     case releasing
     case released
+
+    // Helpers to allow us to test whether a `RoomLifecycle` value has a certain case, without caring about the associated value. These are useful for in contexts where we want to use a `Bool` to communicate a case. For example:
+    //
+    // 1. testing (e.g.  `#expect(status.isFailed)`)
+    // 2. testing that a status does _not_ have a particular case (e.g. if !status.isFailed), which a `case` statement cannot succinctly express
+    //
+    // TODO: These could probably be written as a macro instead to avoid all this boilerplate; by no means pressing, but investigate in https://github.com/ably-labs/ably-chat-swift/issues/71
+
+    public var isInitialized: Bool {
+        if case .initialized = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isAttaching: Bool {
+        if case .attaching = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isAttached: Bool {
+        if case .attached = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isDetaching: Bool {
+        if case .detaching = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isDetached: Bool {
+        if case .detached = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isSuspended: Bool {
+        if case .suspended = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isFailed: Bool {
+        if case .failed = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isReleasing: Bool {
+        if case .releasing = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    public var isReleased: Bool {
+        if case .released = self {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 public struct RoomStatusChange: Sendable {
     public var current: RoomLifecycle
     public var previous: RoomLifecycle
-    // TODO: (https://github.com/ably-labs/ably-chat-swift/issues/12): consider how to avoid the need for an unwrap
-    public var error: ARTErrorInfo?
 
-    public init(current: RoomLifecycle, previous: RoomLifecycle, error: ARTErrorInfo? = nil) {
+    public init(current: RoomLifecycle, previous: RoomLifecycle) {
         self.current = current
         self.previous = previous
-        self.error = error
     }
 }
 
