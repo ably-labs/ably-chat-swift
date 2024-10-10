@@ -518,7 +518,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         changeStatus(to: .detached)
     }
 
-    /// Implementes CHA-RL3’s RELEASE operation.
+    /// Implements CHA-RL3’s RELEASE operation.
     internal func performReleaseOperation() async {
         switch status {
         case .released:
