@@ -125,6 +125,51 @@ struct RoomLifecycleManagerTests {
         }
     }
 
+    // @spec CHA-RL1d
+    @Test
+    func attach_ifOtherOperationInProgress_waitsForItToComplete() async throws {
+        // Given: A RoomLifecycleManager with another lifecycle operation in progress
+        let contributorDetachOperation = SignallableChannelOperation()
+        let manager = await createManager(
+            contributors: [
+                createContributor(
+                    attachBehavior: .complete(.success),
+                    // TODO: explain this is our way of delaying the completion of DETACH
+                    detachBehavior: contributorDetachOperation.behavior
+                ),
+            ]
+        )
+
+        let detachOperationID = UUID()
+        let attachOperationID = UUID()
+
+        let statusChangeSubscription = await manager.onChange(bufferingPolicy: .unbounded)
+        // TODO: explain that waiting for DETACHED is our sign that the manager has actually registered the DETACH operation
+        async let detachedStatusChange = statusChangeSubscription.first { $0.current == .detaching }
+
+        let operationWaitEventSubscription = await manager.testsOnly_subscribeToOperationWaitEvents()
+        async let attachedWaitingForDetachedEvent = operationWaitEventSubscription.first { operationWaitEvent in
+            operationWaitEvent == .init(waitingOperationID: attachOperationID, waitedOperationID: detachOperationID)
+        }
+
+        async let _ = manager.performDetachOperation(testsOnly_operationID: detachOperationID) // arbitrary other operation in progress
+        _ = await detachedStatusChange
+
+        // When: `performAttachOperation()` is called on the lifecycle manager
+        async let attachTask: Void = manager.performAttachOperation(testsOnly_operationID: attachOperationID)
+
+        // Then: TODO explain the limitations of this test
+        _ = try #require(await attachedWaitingForDetachedEvent)
+
+        print("got waiting event")
+
+        // allow detach to complete
+        contributorDetachOperation.complete(result: .success /* arbitrary */ )
+        // TODO: how would we check this?
+        // this checks that attach completes
+        try await attachTask
+    }
+
     // @spec CHA-RL1e
     @Test
     func attach_transitionsToAttaching() async throws {

@@ -543,6 +543,11 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             break
         }
 
+        // CHA-RL1d
+        if let currentOperationID = status.operationID {
+            _ = await resultOfThrowingOperationWithID(currentOperationID, callerOperationID: operationID)
+        }
+
         // CHA-RL1e
         changeStatus(to: .attaching(attachOperationID: operationID))
 
