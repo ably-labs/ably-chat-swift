@@ -363,10 +363,141 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         status.operationID != nil
     }
 
+    // TODO: turn into type
+    private typealias ContinuationsStorageByOperationID<Failure: Error> = [UUID: [AsyncStream<Result<Void, Failure>>.Continuation]]
+
+    private var nonThrowingOperationResultContinuationsByOperationID: ContinuationsStorageByOperationID<Never> = [:]
+    private var throwingOperationResultContinuationsByOperationID: ContinuationsStorageByOperationID<Error> = [:]
+
+    private func resultOfNonThrowingOperationWithID(_ idOfOperationToWaitFor: UUID, callerOperationID: UUID) async -> Result<Void, Never> {
+        // TODO: how can we be sure that these don't result in actor hopping? i.e. that the synchronous part of `resultOfOperationWithID` happens immediately
+        await resultOfOperationWithID(
+            idOfOperationToWaitFor,
+            callerOperationID: callerOperationID,
+            getContinuationsStorage: {
+                nonThrowingOperationResultContinuationsByOperationID
+            },
+            setContinuationsStorage: { newValue in
+                nonThrowingOperationResultContinuationsByOperationID = newValue
+            }
+        )
+    }
+
+    private func resultOfThrowingOperationWithID(_ idOfOperationToWaitFor: UUID, callerOperationID: UUID) async -> Result<Void, Error> {
+        // TODO: how can we be sure that these don't result in actor hopping? i.e. that the synchronous part of `resultOfOperationWithID` happens immediately
+        await resultOfOperationWithID(
+            idOfOperationToWaitFor,
+            callerOperationID: callerOperationID,
+            getContinuationsStorage: {
+                throwingOperationResultContinuationsByOperationID
+            },
+            setContinuationsStorage: { newValue in
+                throwingOperationResultContinuationsByOperationID = newValue
+            }
+        )
+    }
+
+    private func resultOfOperationWithID<Failure: Error>(
+        _ idOfOperationToWaitFor: UUID,
+        callerOperationID: UUID,
+        getContinuationsStorage: () -> ContinuationsStorageByOperationID<Failure>,
+        setContinuationsStorage: (ContinuationsStorageByOperationID<Failure>) -> Void
+    ) async -> Result<Void, Failure> {
+        logger.log(message: "Operation \(callerOperationID) started waiting for result of operation \(idOfOperationToWaitFor)", level: .debug)
+        let (stream, continuation) = AsyncStream.makeStream(of: Result<Void, Failure>.self)
+        // TODO: does this work? something I remain confused about in Swift
+        var continuationsStorage = getContinuationsStorage()
+        continuationsStorage[idOfOperationToWaitFor, default: []].append(continuation)
+        setContinuationsStorage(continuationsStorage)
+        // TODO: why would this return nil? is there a better primitive I can use?
+        let result = await (stream.first { _ in true })!
+        logger.log(message: "Operation \(callerOperationID) completed waiting for result of operation \(idOfOperationToWaitFor), result is \(result)", level: .debug)
+        return result
+    }
+
+    // TODO: who calls this? I don't think the `defer` can? but we don't want to have to call it each time an operation completes. ok, that's what i'm implementing with performAnOperation
+    private func operationWithID<Failure: Error>(
+        _ operationID: UUID,
+        didCompleteWithResult result: Result<Void, Failure>,
+        getContinuationsStorage: () -> ContinuationsStorageByOperationID<Failure>,
+        setContinuationsStorage: (ContinuationsStorageByOperationID<Failure>) -> Void
+    ) {
+        logger.log(message: "Operation \(operationID) completed with result \(result)", level: .debug)
+        var continuationsStorage = getContinuationsStorage()
+        let continuations = continuationsStorage[operationID, default: []]
+        continuationsStorage.removeValue(forKey: operationID)
+        setContinuationsStorage(continuationsStorage)
+
+        for continuation in continuations {
+            continuation.yield(result)
+            // TODO: is this necessary?
+            continuation.finish()
+        }
+    }
+
+    // TODO: make it clear that what we have _not_ implemented is a queue — each operation has its own logic for whether it should proceed in relation to other operations
+
+    // TODO: what is this
+    // TODO: use this for all operations
+    // TODO: note that the operation is isolated to the actor (or is it? not sure — find out)
+    private func performAnOperation<Failure: Error>(
+        _ body: (UUID) async throws(Failure) -> Void,
+        getContinuationsStorage: () -> ContinuationsStorageByOperationID<Failure>,
+        setContinuationsStorage: (ContinuationsStorageByOperationID<Failure>) -> Void
+    ) async throws(Failure) {
+        let operationID = UUID()
+        logger.log(message: "Performing operation \(operationID)", level: .debug)
+        let result: Result<Void, Failure>
+        do {
+            try await body(operationID)
+            result = .success(())
+        } catch {
+            result = .failure(error)
+        }
+
+        // TODO: I guess the fact that the operation hasn't returned doesn't matter?
+        operationWithID(
+            operationID,
+            didCompleteWithResult: result,
+            getContinuationsStorage: getContinuationsStorage,
+            setContinuationsStorage: setContinuationsStorage
+        )
+
+        try result.get()
+    }
+
+    internal func performAThrowingOperation(_ body: (UUID) async throws -> Void) async throws {
+        try await performAnOperation(
+            body,
+            getContinuationsStorage: {
+                throwingOperationResultContinuationsByOperationID
+            },
+            setContinuationsStorage: { newValue in
+                throwingOperationResultContinuationsByOperationID = newValue
+            }
+        )
+    }
+
+    internal func performANonThrowingOperation(_ body: (UUID) async -> Void) async {
+        await performAnOperation(
+            body,
+            getContinuationsStorage: {
+                nonThrowingOperationResultContinuationsByOperationID
+            },
+            setContinuationsStorage: { newValue in
+                nonThrowingOperationResultContinuationsByOperationID = newValue
+            }
+        )
+    }
+
     /// Implements CHA-RL1’s `ATTACH` operation.
     internal func performAttachOperation() async throws {
-        let operationID = UUID()
+        try await performAThrowingOperation { operationID in
+            try await bodyOfAttachOperation(operationID: operationID)
+        }
+    }
 
+    private func bodyOfAttachOperation(operationID: UUID) async throws {
         switch status {
         case .attached:
             // CHA-RL1a
@@ -459,8 +590,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     /// Implements CHA-RL2’s DETACH operation.
     internal func performDetachOperation() async throws {
-        let operationID = UUID()
+        try await performAThrowingOperation { operationID in
+            try await bodyOfDetachOperation(operationID: operationID)
+        }
+    }
 
+    private func bodyOfDetachOperation(operationID: UUID) async throws {
         switch status {
         case .detached:
             // CHA-RL2a
@@ -540,8 +675,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     /// Implements CHA-RL3’s RELEASE operation.
     internal func performReleaseOperation() async {
-        let operationID = UUID()
+        await performANonThrowingOperation { operationID in
+            await bodyOfReleaseOperation(operationID: operationID)
+        }
+    }
 
+    private func bodyOfReleaseOperation(operationID: UUID) async {
         switch status {
         case .released:
             // CHA-RL3a
