@@ -28,14 +28,14 @@ struct RoomLifecycleManagerTests {
     }
 
     private func createManager(
-        forTestingWhatHappensWhenCurrentlyIn current: RoomLifecycle? = nil,
+        forTestingWhatHappensWhenCurrentlyIn status: RoomLifecycleManager<MockRoomLifecycleContributor>.Status? = nil,
         forTestingWhatHappensWhenHasOperationInProgress hasOperationInProgress: Bool? = nil,
         forTestingWhatHappensWhenHasPendingDiscontinuityEvents pendingDiscontinuityEvents: [MockRoomLifecycleContributor.ID: [ARTErrorInfo]]? = nil,
         contributors: [MockRoomLifecycleContributor] = [],
         clock: SimpleClock = MockSimpleClock()
     ) async -> RoomLifecycleManager<MockRoomLifecycleContributor> {
         await .init(
-            testsOnly_current: current,
+            testsOnly_status: status,
             testsOnly_hasOperationInProgress: hasOperationInProgress,
             testsOnly_pendingDiscontinuityEvents: pendingDiscontinuityEvents,
             contributors: contributors,
@@ -911,9 +911,9 @@ struct RoomLifecycleManagerTests {
             createContributor(initialState: .detached),
         ]
 
-        let initialManagerState = RoomLifecycle.initialized // arbitrary non-ATTACHED
+        let initialManagerStatus = RoomLifecycleManager<MockRoomLifecycleContributor>.Status.initialized // arbitrary non-ATTACHED
         let manager = await createManager(
-            forTestingWhatHappensWhenCurrentlyIn: initialManagerState,
+            forTestingWhatHappensWhenCurrentlyIn: initialManagerStatus,
             forTestingWhatHappensWhenHasOperationInProgress: false,
             contributors: contributors
         )
@@ -932,7 +932,7 @@ struct RoomLifecycleManagerTests {
         }
 
         // Then: The room status does not change
-        #expect(await manager.current == initialManagerState)
+        #expect(await manager.current == initialManagerStatus.toRoomLifecycle)
     }
 
     // @specPartial CHA-RL4b9 - Haven’t implemented the part that refers to "transient disconnect timeouts"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/48). Nor have I implemented "the room enters the RETRY loop"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/51)
