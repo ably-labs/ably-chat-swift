@@ -257,7 +257,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
         // TODO: explain
 
-        internal struct OperationWaitEvent {
+        internal struct OperationWaitEvent: Equatable {
             internal var waitingOperationID: UUID
             internal var waitedOperationID: UUID
         }
@@ -463,11 +463,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     // TODO: use this for all operations
     // TODO: note that the operation is isolated to the actor (or is it? not sure — find out)
     private func performAnOperation<Failure: Error>(
+        testsOnly_operationID: UUID?,
         _ body: (UUID) async throws(Failure) -> Void,
         getContinuationsStorage: () -> ContinuationsStorageByOperationID<Failure>,
         setContinuationsStorage: (ContinuationsStorageByOperationID<Failure>) -> Void
     ) async throws(Failure) {
-        let operationID = UUID()
+        let operationID = testsOnly_operationID ?? UUID()
         logger.log(message: "Performing operation \(operationID)", level: .debug)
         let result: Result<Void, Failure>
         do {
@@ -488,8 +489,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         try result.get()
     }
 
-    internal func performAThrowingOperation(_ body: (UUID) async throws -> Void) async throws {
+    internal func performAThrowingOperation(
+        testsOnly_operationID: UUID?,
+        _ body: (UUID) async throws -> Void
+    ) async throws {
         try await performAnOperation(
+            testsOnly_operationID: testsOnly_operationID,
             body,
             getContinuationsStorage: {
                 throwingOperationResultContinuationsByOperationID
@@ -500,8 +505,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         )
     }
 
-    internal func performANonThrowingOperation(_ body: (UUID) async -> Void) async {
+    internal func performANonThrowingOperation(
+        testsOnly_operationID: UUID?,
+        _ body: (UUID) async -> Void
+    ) async {
         await performAnOperation(
+            testsOnly_operationID: testsOnly_operationID,
             body,
             getContinuationsStorage: {
                 nonThrowingOperationResultContinuationsByOperationID
@@ -513,8 +522,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     }
 
     /// Implements CHA-RL1’s `ATTACH` operation.
-    internal func performAttachOperation() async throws {
-        try await performAThrowingOperation { operationID in
+    internal func performAttachOperation(testsOnly_operationID: UUID? = nil) async throws {
+        try await performAThrowingOperation(testsOnly_operationID: testsOnly_operationID) { operationID in
             try await bodyOfAttachOperation(operationID: operationID)
         }
     }
@@ -611,8 +620,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     }
 
     /// Implements CHA-RL2’s DETACH operation.
-    internal func performDetachOperation() async throws {
-        try await performAThrowingOperation { operationID in
+    internal func performDetachOperation(testsOnly_operationID: UUID? = nil) async throws {
+        try await performAThrowingOperation(testsOnly_operationID: testsOnly_operationID) { operationID in
             try await bodyOfDetachOperation(operationID: operationID)
         }
     }
@@ -696,8 +705,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     }
 
     /// Implements CHA-RL3’s RELEASE operation.
-    internal func performReleaseOperation() async {
-        await performANonThrowingOperation { operationID in
+    internal func performReleaseOperation(testsOnly_operationID: UUID? = nil) async {
+        await performANonThrowingOperation(testsOnly_operationID: testsOnly_operationID) { operationID in
             await bodyOfReleaseOperation(operationID: operationID)
         }
     }
