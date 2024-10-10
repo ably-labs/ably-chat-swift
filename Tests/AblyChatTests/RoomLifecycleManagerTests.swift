@@ -871,7 +871,7 @@ struct RoomLifecycleManagerTests {
     // @specOneOf(1/2) CHA-RL4b8
     @Test
     func contributorAttachedEvent_withNoOperationInProgress_roomNotAttached_allContributorsAttached() async throws {
-        // Given: A RoomLifecycleManager, not in the ATTACHED state, all of whose contributors are in the ATTACHED state (to satisfy the condition of CHA-RL4b8; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
+        // Given: A RoomLifecycleManager, with no operation in progress and not in the ATTACHED state, all of whose contributors are in the ATTACHED state (to satisfy the condition of CHA-RL4b8; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
         let contributors = [
             createContributor(initialState: .attached),
             createContributor(initialState: .attached),
@@ -905,7 +905,7 @@ struct RoomLifecycleManagerTests {
     // @specOneOf(2/2) CHA-RL4b8 - Tests that the specified side effect doesn’t happen if part of the condition (i.e. all contributors now being ATTACHED) is not met
     @Test
     func contributorAttachedEvent_withNoOperationInProgress_roomNotAttached_notAllContributorsAttached() async throws {
-        // Given: A RoomLifecycleManager, not in the ATTACHED state, one of whose contributors is not in the ATTACHED state state (to simulate the condition of CHA-RL4b8 not being met; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
+        // Given: A RoomLifecycleManager, with no operation in progress and not in the ATTACHED state, one of whose contributors is not in the ATTACHED state state (to simulate the condition of CHA-RL4b8 not being met; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
         let contributors = [
             createContributor(initialState: .attached),
             createContributor(initialState: .detached),
