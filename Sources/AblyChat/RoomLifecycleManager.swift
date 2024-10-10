@@ -49,13 +49,13 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     internal enum Status: Equatable {
         case initialized
-        case attaching
+        case attaching(attachOperationID: UUID)
         case attached
-        case detaching
+        case detaching(detachOperationID: UUID)
         case detached
         case suspended(error: ARTErrorInfo)
         case failed(error: ARTErrorInfo)
-        case releasing
+        case releasing(releaseOperationID: UUID)
         case released
 
         internal var toRoomLifecycle: RoomLifecycle {
@@ -80,6 +80,24 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                 .released
             }
         }
+
+        fileprivate var operationID: UUID? {
+            switch self {
+            case let .attaching(attachOperationID):
+                attachOperationID
+            case let .detaching(detachOperationID):
+                detachOperationID
+            case let .releasing(releaseOperationID):
+                releaseOperationID
+            case .suspended,
+                 .initialized,
+                 .attached,
+                 .detached,
+                 .failed,
+                 .released:
+                nil
+            }
+        }
     }
 
     private var status: Status
@@ -87,8 +105,6 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         status.toRoomLifecycle
     }
 
-    // TODO: This currently allows the the tests to inject a value in order to test the spec points that are predicated on whether “a channel lifecycle operation is in progress”. In https://github.com/ably-labs/ably-chat-swift/issues/52 we’ll set this property based on whether there actually is a lifecycle operation in progress.
-    private let hasOperationInProgress: Bool
     /// Manager state that relates to individual contributors, keyed by contributors’ ``Contributor.id``. Stored separately from ``contributors`` so that the latter can be a `let`, to make it clear that the contributors remain fixed for the lifetime of the manager.
     private var contributorAnnotations: ContributorAnnotations
 
@@ -137,7 +153,6 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     ) async {
         await self.init(
             status: nil,
-            hasOperationInProgress: nil,
             pendingDiscontinuityEvents: [:],
             contributors: contributors,
             logger: logger,
@@ -148,7 +163,6 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     #if DEBUG
         internal init(
             testsOnly_status status: Status? = nil,
-            testsOnly_hasOperationInProgress hasOperationInProgress: Bool? = nil,
             testsOnly_pendingDiscontinuityEvents pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]? = nil,
             contributors: [Contributor],
             logger: InternalLogger,
@@ -156,7 +170,6 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         ) async {
             await self.init(
                 status: status,
-                hasOperationInProgress: hasOperationInProgress,
                 pendingDiscontinuityEvents: pendingDiscontinuityEvents,
                 contributors: contributors,
                 logger: logger,
@@ -167,14 +180,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     private init(
         status: Status?,
-        hasOperationInProgress: Bool?,
         pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]?,
         contributors: [Contributor],
         logger: InternalLogger,
         clock: SimpleClock
     ) async {
         self.status = status ?? .initialized
-        self.hasOperationInProgress = hasOperationInProgress ?? false
         self.contributors = contributors
         contributorAnnotations = .init(contributors: contributors, pendingDiscontinuityEvents: pendingDiscontinuityEvents ?? [:])
         self.logger = logger
@@ -348,8 +359,14 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
     }
 
+    private var hasOperationInProgress: Bool {
+        status.operationID != nil
+    }
+
     /// Implements CHA-RL1’s `ATTACH` operation.
     internal func performAttachOperation() async throws {
+        let operationID = UUID()
+
         switch status {
         case .attached:
             // CHA-RL1a
@@ -365,7 +382,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
 
         // CHA-RL1e
-        changeStatus(to: .attaching)
+        changeStatus(to: .attaching(attachOperationID: operationID))
 
         // CHA-RL1f
         for contributor in contributors {
@@ -405,6 +422,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         changeStatus(to: .attached)
 
         // CHA-RL1g2
+        // TODO: this is not great, we're pretending that the operation has finished but it hasn't
         await emitPendingDiscontinuityEvents()
     }
 
@@ -441,6 +459,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     /// Implements CHA-RL2’s DETACH operation.
     internal func performDetachOperation() async throws {
+        let operationID = UUID()
+
         switch status {
         case .detached:
             // CHA-RL2a
@@ -459,7 +479,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
 
         // CHA-RL2e
-        changeStatus(to: .detaching)
+        changeStatus(to: .detaching(detachOperationID: operationID))
 
         // CHA-RL2f
         var firstDetachError: Error?
@@ -520,6 +540,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     /// Implements CHA-RL3’s RELEASE operation.
     internal func performReleaseOperation() async {
+        let operationID = UUID()
+
         switch status {
         case .released:
             // CHA-RL3a
@@ -533,7 +555,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
 
         // CHA-RL3c
-        changeStatus(to: .releasing)
+        changeStatus(to: .releasing(releaseOperationID: operationID))
 
         // CHA-RL3d
         for contributor in contributors {

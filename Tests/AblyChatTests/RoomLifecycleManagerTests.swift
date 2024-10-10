@@ -29,14 +29,12 @@ struct RoomLifecycleManagerTests {
 
     private func createManager(
         forTestingWhatHappensWhenCurrentlyIn status: RoomLifecycleManager<MockRoomLifecycleContributor>.Status? = nil,
-        forTestingWhatHappensWhenHasOperationInProgress hasOperationInProgress: Bool? = nil,
         forTestingWhatHappensWhenHasPendingDiscontinuityEvents pendingDiscontinuityEvents: [MockRoomLifecycleContributor.ID: [ARTErrorInfo]]? = nil,
         contributors: [MockRoomLifecycleContributor] = [],
         clock: SimpleClock = MockSimpleClock()
     ) async -> RoomLifecycleManager<MockRoomLifecycleContributor> {
         await .init(
             testsOnly_status: status,
-            testsOnly_hasOperationInProgress: hasOperationInProgress,
             testsOnly_pendingDiscontinuityEvents: pendingDiscontinuityEvents,
             contributors: contributors,
             logger: TestLogger(),
@@ -99,7 +97,9 @@ struct RoomLifecycleManagerTests {
     @Test
     func attach_whenReleasing() async throws {
         // Given: A RoomLifecycleManager in the RELEASING state
-        let manager = await createManager(forTestingWhatHappensWhenCurrentlyIn: .releasing)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .releasing(releaseOperationID: UUID() /* arbitrary */ )
+        )
 
         // When: `performAttachOperation()` is called on the lifecycle manager
         // Then: It throws a roomIsReleasing error
@@ -392,7 +392,9 @@ struct RoomLifecycleManagerTests {
     @Test
     func detach_whenReleasing() async throws {
         // Given: A RoomLifecycleManager in the RELEASING state
-        let manager = await createManager(forTestingWhatHappensWhenCurrentlyIn: .releasing)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .releasing(releaseOperationID: UUID() /* arbitrary */ )
+        )
 
         // When: `performDetachOperation()` is called on the lifecycle manager
         // Then: It throws a roomIsReleasing error
@@ -751,7 +753,10 @@ struct RoomLifecycleManagerTests {
     func contributorUpdate_withResumedFalse_withOperationInProgress_recordsPendingDiscontinuityEvent() async throws {
         // Given: A RoomLifecycleManager, with a room lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: true, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .attaching(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
+            contributors: [contributor]
+        )
 
         // When: A contributor emits an UPDATE event with `resumed` flag set to false
         let contributorStateChange = ARTChannelStateChange(
@@ -779,7 +784,10 @@ struct RoomLifecycleManagerTests {
     func contributorUpdate_withResumedTrue_withNoOperationInProgress_emitsDiscontinuityEvent() async throws {
         // Given: A RoomLifecycleManager, with no room lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // case arbitrary, just care that no operation is in progress
+            contributors: [contributor]
+        )
 
         // When: A contributor emits an UPDATE event with `resumed` flag set to false
         let contributorStateChange = ARTChannelStateChange(
@@ -807,7 +815,10 @@ struct RoomLifecycleManagerTests {
     func contributorAttachEvent_withResumeFalse_withOperationInProgress_recordsPendingDiscontinuityEvent() async throws {
         // Given: A RoomLifecycleManager, with a room lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: true, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .attaching(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
+            contributors: [contributor]
+        )
 
         // When: A contributor emits an ATTACHED event with `resumed` flag set to false
         let contributorStateChange = ARTChannelStateChange(
@@ -839,7 +850,10 @@ struct RoomLifecycleManagerTests {
             createContributor(detachBehavior: .success),
             createContributor(detachBehavior: .success),
         ]
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: contributors)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // case arbitrary, just care that no operation is in progress
+            contributors: contributors
+        )
 
         let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
         async let failedStatusChange = roomStatusSubscription.failedElements().first { _ in true }
@@ -879,7 +893,6 @@ struct RoomLifecycleManagerTests {
 
         let manager = await createManager(
             forTestingWhatHappensWhenCurrentlyIn: .initialized, // arbitrary non-ATTACHED
-            forTestingWhatHappensWhenHasOperationInProgress: false,
             contributors: contributors
         )
 
@@ -911,10 +924,9 @@ struct RoomLifecycleManagerTests {
             createContributor(initialState: .detached),
         ]
 
-        let initialManagerStatus = RoomLifecycleManager<MockRoomLifecycleContributor>.Status.initialized // arbitrary non-ATTACHED
+        let initialManagerStatus = RoomLifecycleManager<MockRoomLifecycleContributor>.Status.detached // arbitrary non-ATTACHED, no-operation-in-progress
         let manager = await createManager(
             forTestingWhatHappensWhenCurrentlyIn: initialManagerStatus,
-            forTestingWhatHappensWhenHasOperationInProgress: false,
             contributors: contributors
         )
 
@@ -940,7 +952,10 @@ struct RoomLifecycleManagerTests {
     func contributorSuspendedEvent_withNoOperationInProgress() async throws {
         // Given: A RoomLifecycleManager with no lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // case arbitrary, just care that no operation is in progress
+            contributors: [contributor]
+        )
 
         let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
         async let maybeSuspendedRoomStatusChange = roomStatusSubscription.suspendedElements().first { _ in true }
