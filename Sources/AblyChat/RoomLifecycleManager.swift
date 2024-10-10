@@ -254,6 +254,21 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             stateChangeHandledSubscriptions.append(subscription)
             return subscription
         }
+
+        // TODO: explain
+
+        internal struct OperationWaitEvent {
+            internal var waitingOperationID: UUID
+            internal var waitedOperationID: UUID
+        }
+
+        private var operationWaitEventSubcriptions: [Subscription<OperationWaitEvent>] = []
+
+        internal func testsOnly_subscribeToOperationWaitEvents() -> Subscription<OperationWaitEvent> {
+            let subscription = Subscription<OperationWaitEvent>(bufferingPolicy: .unbounded)
+            operationWaitEventSubcriptions.append(subscription)
+            return subscription
+        }
     #endif
 
     /// Implements CHA-RL4b’s contributor state change handling.
@@ -404,6 +419,13 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         setContinuationsStorage: (ContinuationsStorageByOperationID<Failure>) -> Void
     ) async -> Result<Void, Failure> {
         logger.log(message: "Operation \(callerOperationID) started waiting for result of operation \(idOfOperationToWaitFor)", level: .debug)
+        #if DEBUG
+            let operationWaitEvent = OperationWaitEvent(waitingOperationID: callerOperationID, waitedOperationID: idOfOperationToWaitFor)
+            for subscription in operationWaitEventSubcriptions {
+                subscription.emit(operationWaitEvent)
+            }
+        #endif
+
         let (stream, continuation) = AsyncStream.makeStream(of: Result<Void, Failure>.self)
         // TODO: does this work? something I remain confused about in Swift
         var continuationsStorage = getContinuationsStorage()
