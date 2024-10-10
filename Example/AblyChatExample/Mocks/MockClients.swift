@@ -412,7 +412,7 @@ actor MockRoomStatus: RoomStatus {
 
     private func createSubscription() -> MockSubscription<RoomStatusChange> {
         let subscription = MockSubscription<RoomStatusChange>(randomElement: {
-            RoomStatusChange(current: [.attached, .attached, .attached, .attached, .attaching, .attaching, .suspended].randomElement()!, previous: .attaching)
+            RoomStatusChange(current: [.attached, .attached, .attached, .attached, .attaching, .attaching, .suspended(error: .createUnknownError())].randomElement()!, previous: .attaching)
         }, interval: 8)
         mockSubscriptions.append(subscription)
         return subscription

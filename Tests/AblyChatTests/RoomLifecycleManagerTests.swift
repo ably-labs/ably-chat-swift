@@ -79,13 +79,6 @@ struct RoomLifecycleManagerTests {
         #expect(await manager.current == .initialized)
     }
 
-    @Test
-    func error_startsAsNil() async {
-        let manager = await createManager()
-
-        #expect(await manager.error == nil)
-    }
-
     // MARK: - ATTACH operation
 
     // @spec CHA-RL1a
@@ -229,7 +222,7 @@ struct RoomLifecycleManagerTests {
         let manager = await createManager(contributors: contributors)
 
         let statusChangeSubscription = await manager.onChange(bufferingPolicy: .unbounded)
-        async let maybeSuspendedStatusChange = statusChangeSubscription.first { $0.current == .suspended }
+        async let maybeSuspendedStatusChange = statusChangeSubscription.suspendedElements().first { _ in true }
 
         // When: `performAttachOperation()` is called on the lifecycle manager
         async let roomAttachResult: Void = manager.performAttachOperation()
@@ -241,7 +234,7 @@ struct RoomLifecycleManagerTests {
         // 3. the room attach operation fails with this same error
         let suspendedStatusChange = try #require(await maybeSuspendedStatusChange)
 
-        #expect(await manager.current == .suspended)
+        #expect(await manager.current.isSuspended)
 
         var roomAttachError: Error?
         do {
@@ -250,7 +243,7 @@ struct RoomLifecycleManagerTests {
             roomAttachError = error
         }
 
-        for error in await [suspendedStatusChange.error, manager.error, roomAttachError] {
+        for error in await [suspendedStatusChange.error, manager.current.error, roomAttachError] {
             #expect(isChatError(error, withCode: .messagesAttachmentFailed, cause: contributorAttachError))
         }
     }
@@ -280,7 +273,7 @@ struct RoomLifecycleManagerTests {
         let manager = await createManager(contributors: contributors)
 
         let statusChangeSubscription = await manager.onChange(bufferingPolicy: .unbounded)
-        async let maybeFailedStatusChange = statusChangeSubscription.first { $0.current == .failed }
+        async let maybeFailedStatusChange = statusChangeSubscription.failedElements().first { _ in true }
 
         // When: `performAttachOperation()` is called on the lifecycle manager
         async let roomAttachResult: Void = manager.performAttachOperation()
@@ -291,7 +284,7 @@ struct RoomLifecycleManagerTests {
         // 3. the room attach operation fails with this same error
         let failedStatusChange = try #require(await maybeFailedStatusChange)
 
-        #expect(await manager.current == .failed)
+        #expect(await manager.current.isFailed)
 
         var roomAttachError: Error?
         do {
@@ -300,7 +293,7 @@ struct RoomLifecycleManagerTests {
             roomAttachError = error
         }
 
-        for error in await [failedStatusChange.error, manager.error, roomAttachError] {
+        for error in await [failedStatusChange.error, manager.current.error, roomAttachError] {
             #expect(isChatError(error, withCode: .messagesAttachmentFailed, cause: contributorAttachError))
         }
     }
@@ -429,7 +422,11 @@ struct RoomLifecycleManagerTests {
     @Test
     func detach_whenFailed() async throws {
         // Given: A RoomLifecycleManager in the FAILED state
-        let manager = await createManager(forTestingWhatHappensWhenCurrentlyIn: .failed)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .failed(
+                error: .createUnknownError() /* arbitrary */
+            )
+        )
 
         // When: `performAttachOperation()` is called on the lifecycle manager
         // Then: It throws a roomInFailedState error
@@ -507,7 +504,7 @@ struct RoomLifecycleManagerTests {
         let manager = await createManager(contributors: contributors)
 
         let statusChangeSubscription = await manager.onChange(bufferingPolicy: .unbounded)
-        async let maybeFailedStatusChange = statusChangeSubscription.first { $0.current == .failed }
+        async let maybeFailedStatusChange = statusChangeSubscription.failedElements().first { _ in true }
 
         // When: `performDetachOperation()` is called on the lifecycle manager
         let maybeRoomDetachError: Error?
@@ -845,7 +842,7 @@ struct RoomLifecycleManagerTests {
         let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: contributors)
 
         let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
-        async let failedStatusChange = roomStatusSubscription.first { $0.current == .failed }
+        async let failedStatusChange = roomStatusSubscription.failedElements().first { _ in true }
 
         // When: A contributor emits an FAILED event
         let contributorStateChange = ARTChannelStateChange(
@@ -864,7 +861,7 @@ struct RoomLifecycleManagerTests {
         // - the room status transitions to failed, with the error of the status change being the `reason` of the contributor FAILED event
         // - and it calls `detach` on all contributors
         _ = try #require(await failedStatusChange)
-        #expect(await manager.current == .failed)
+        #expect(await manager.current.isFailed)
 
         for contributor in contributors {
             #expect(await contributor.channel.detachCallCount == 1)
@@ -946,14 +943,15 @@ struct RoomLifecycleManagerTests {
         let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: [contributor])
 
         let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
-        async let maybeSuspendedRoomStatusChange = roomStatusSubscription.first { $0.current == .suspended }
+        async let maybeSuspendedRoomStatusChange = roomStatusSubscription.suspendedElements().first { _ in true }
 
         // When: A contributor emits a state change to SUSPENDED
+        let contributorStateChangeReason = ARTErrorInfo(domain: "SomeDomain", code: 123) // arbitrary
         let contributorStateChange = ARTChannelStateChange(
             current: .suspended,
             previous: .attached, // arbitrary
             event: .suspended,
-            reason: ARTErrorInfo(domain: "SomeDomain", code: 123), // arbitrary
+            reason: contributorStateChangeReason,
             resumed: false // arbitrary
         )
 
@@ -961,9 +959,8 @@ struct RoomLifecycleManagerTests {
 
         // Then: The room transitions to SUSPENDED, and this state change has error equal to the contributor state change’s `reason`
         let suspendedRoomStatusChange = try #require(await maybeSuspendedRoomStatusChange)
-        #expect(suspendedRoomStatusChange.error === contributorStateChange.reason)
+        #expect(suspendedRoomStatusChange.error === contributorStateChangeReason)
 
-        #expect(await manager.current == .suspended)
-        #expect(await manager.error === contributorStateChange.reason)
+        #expect(await manager.current == .suspended(error: contributorStateChangeReason))
     }
 }

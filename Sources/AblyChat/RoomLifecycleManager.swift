@@ -48,7 +48,6 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     }
 
     internal private(set) var current: RoomLifecycle
-    internal private(set) var error: ARTErrorInfo?
     // TODO: This currently allows the the tests to inject a value in order to test the spec points that are predicated on whether “a channel lifecycle operation is in progress”. In https://github.com/ably-labs/ably-chat-swift/issues/52 we’ll set this property based on whether there actually is a lifecycle operation in progress.
     private let hasOperationInProgress: Bool
     /// Manager state that relates to individual contributors, keyed by contributors’ ``Contributor.id``. Stored separately from ``contributors`` so that the latter can be a `let`, to make it clear that the contributors remain fixed for the lifetime of the manager.
@@ -263,7 +262,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                     preconditionFailure("FAILED state change event should have a reason")
                 }
 
-                changeStatus(to: .failed, error: reason)
+                changeStatus(to: .failed(error: reason))
 
                 // TODO: CHA-RL4b5 is a bit unclear about how to handle failure, and whether they can be detached concurrently (asked in https://github.com/ably/specification/pull/200/files#r1777471810)
                 for contributor in contributors {
@@ -282,7 +281,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                     preconditionFailure("SUSPENDED state change event should have a reason")
                 }
 
-                changeStatus(to: .suspended, error: reason)
+                changeStatus(to: .suspended(error: reason))
             }
         default:
             break
@@ -295,13 +294,12 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         #endif
     }
 
-    /// Updates ``current`` and ``error`` and emits a status change event.
-    private func changeStatus(to new: RoomLifecycle, error: ARTErrorInfo? = nil) {
-        logger.log(message: "Transitioning from \(current) to \(new), error \(String(describing: error))", level: .info)
+    /// Updates ``current`` and emits a status change event.
+    private func changeStatus(to new: RoomLifecycle) {
+        logger.log(message: "Transitioning from \(current) to \(new)", level: .info)
         let previous = current
         current = new
-        self.error = error
-        let statusChange = RoomStatusChange(current: current, previous: previous, error: error)
+        let statusChange = RoomStatusChange(current: current, previous: previous)
         emitStatusChange(statusChange)
     }
 
@@ -343,14 +341,14 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                 case .suspended:
                     // CHA-RL1h2
                     let error = ARTErrorInfo(chatError: .attachmentFailed(feature: contributor.feature, underlyingError: contributorAttachError))
-                    changeStatus(to: .suspended, error: error)
+                    changeStatus(to: .suspended(error: error))
 
                     // CHA-RL1h3
                     throw error
                 case .failed:
                     // CHA-RL1h4
                     let error = ARTErrorInfo(chatError: .attachmentFailed(feature: contributor.feature, underlyingError: contributorAttachError))
-                    changeStatus(to: .failed, error: error)
+                    changeStatus(to: .failed(error: error))
 
                     // CHA-RL1h5
                     // TODO: Implement the "asynchronously with respect to CHA-RL1h4" part of CHA-RL1h5 (https://github.com/ably-labs/ably-chat-swift/issues/50)
@@ -450,8 +448,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                     }
 
                     // This check is CHA-RL2h2
-                    if current != .failed {
-                        changeStatus(to: .failed, error: error)
+                    if !current.isFailed {
+                        changeStatus(to: .failed(error: error))
                     }
                 default:
                     // CHA-RL2h3: Retry until detach succeeds, with a pause before each attempt
