@@ -27,15 +27,39 @@ struct RoomLifecycleManagerTests {
         }
     }
 
+    /// A mock implementation of a `SimpleClock`’s `sleep(timeInterval:)` operation. Its ``complete(result:)`` method allows you to signal to the mock that the sleep should complete.
+    final class SignallableSleepOperation: Sendable {
+        private let continuation: AsyncStream<Void>.Continuation
+
+        /// When this behavior is set as a ``MockSimpleClock``’s `sleepBehavior`, calling ``complete(result:)`` will cause the corresponding `sleep(timeInterval:)` to complete with the result passed to that method.
+        let behavior: MockSimpleClock.SleepBehavior
+
+        init() {
+            let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
+            self.continuation = continuation
+
+            behavior = .fromFunction {
+                await (stream.first { _ in true })!
+            }
+        }
+
+        /// Causes the async function embedded in ``behavior`` to return.
+        func complete() {
+            continuation.yield(())
+        }
+    }
+
     private func createManager(
         forTestingWhatHappensWhenCurrentlyIn status: RoomLifecycleManager<MockRoomLifecycleContributor>.Status? = nil,
         forTestingWhatHappensWhenHasPendingDiscontinuityEvents pendingDiscontinuityEvents: [MockRoomLifecycleContributor.ID: [ARTErrorInfo]]? = nil,
+        forTestingWhatHappensWhenHasTransientDisconnectTimeoutForTheseContributorIDs idsOfContributorsWithTransientDisconnectTimeout: Set<MockRoomLifecycleContributor.ID>? = nil,
         contributors: [MockRoomLifecycleContributor] = [],
         clock: SimpleClock = MockSimpleClock()
     ) async -> RoomLifecycleManager<MockRoomLifecycleContributor> {
         await .init(
             testsOnly_status: status,
             testsOnly_pendingDiscontinuityEvents: pendingDiscontinuityEvents,
+            testsOnly_idsOfContributorsWithTransientDisconnectTimeout: idsOfContributorsWithTransientDisconnectTimeout,
             contributors: contributors,
             logger: TestLogger(),
             clock: clock
@@ -974,6 +998,87 @@ struct RoomLifecycleManagerTests {
         for contributor in contributors {
             #expect(await contributor.channel.detachCallCount == 1)
         }
+    }
+
+    // @spec CHA-RL4b6
+    func contributorAttachingEvent_withNoOperationInProgress_withTransientDisconnectTimeout() async throws {
+        // Given: A RoomLifecycleManager, with no operation in progress, with a transient disconnect timeout for the contributor mentioned in "When:"
+        let contributor = createContributor()
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // arbitrary no-operation-in-progress
+            forTestingWhatHappensWhenHasTransientDisconnectTimeoutForTheseContributorIDs: [contributor.id],
+            contributors: [contributor]
+        )
+
+        let idOfExistingTransientDisconnectTimeout = try #require(await manager.testsOnly_idOfTransientDisconnectTimeout(for: contributor))
+
+        // When: A contributor emits an ATTACHING event
+        let contributorStateChange = ARTChannelStateChange(
+            current: .attaching,
+            previous: .detached, // arbitrary
+            event: .attaching,
+            reason: nil // arbitrary
+        )
+
+        await waitForManager(manager, toHandleContributorStateChange: contributorStateChange) {
+            await contributor.channel.emitStateChange(contributorStateChange)
+        }
+
+        // Then: It does not set a new transient disconnect timeout (this is my interpretation of CHA-RL4b6’s “no action is needed”, i.e. that the spec point intends to just be the contrapositive of CHA-RL4b7)
+        #expect(await manager.testsOnly_idOfTransientDisconnectTimeout(for: contributor) == idOfExistingTransientDisconnectTimeout)
+    }
+
+    // @specPartial CHA-RL4b7 - This is marked as specPartial because at time of writing the spec point CHA-RL4b7 has been accidentally duplicated to specify two separate behaviours. This test is for the first of those two. TODO: change this one to @spec once spec fixed (see discussion in https://github.com/ably/specification/pull/200#discussion_r1763770348)
+    @Test(
+        arguments: [
+            nil,
+            ARTErrorInfo.create(withCode: 123, message: ""), // arbitrary non-nil
+        ]
+    )
+    func contributorAttachingEvent_withNoOperationInProgress_withNoTransientDisconnectTimeout(contributorStateChangeReason: ARTErrorInfo?) async throws {
+        // Given: A RoomLifecycleManager, with no operation in progress, with no transient disconnect timeout for the contributor mentioned in "When:"
+        let contributor = createContributor()
+        let sleepOperation = SignallableSleepOperation()
+        let clock = MockSimpleClock(sleepBehavior: sleepOperation.behavior)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // arbitrary no-operation-in-progress
+            contributors: [contributor],
+            clock: clock
+        )
+
+        // When: (1) A contributor emits an ATTACHING event
+        let contributorStateChange = ARTChannelStateChange(
+            current: .attaching,
+            previous: .detached, // arbitrary
+            event: .attaching,
+            reason: contributorStateChangeReason
+        )
+
+        async let maybeClockSleepArgument = clock.sleepCallArgumentsAsyncSequence.first { _ in true }
+
+        await waitForManager(manager, toHandleContributorStateChange: contributorStateChange) {
+            await contributor.channel.emitStateChange(contributorStateChange)
+        }
+
+        // Then: The manager records a 5 second transient disconnect timeout for this contributor
+        #expect(try #require(await maybeClockSleepArgument) == 5)
+        #expect(await manager.testsOnly_hasTransientDisconnectTimeout(for: contributor))
+
+        // and When: This transient disconnect timeout completes
+
+        let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
+        async let maybeRoomAttachingStatusChange = roomStatusSubscription.attachingElements().first { _ in true }
+
+        sleepOperation.complete()
+
+        // Then:
+        // 1. The room status transitions to ATTACHING, using the `reason` from the contributor ATTACHING change in (1)
+        // 2. The manager no longer has a transient disconnect timeout for this contributor
+
+        let roomAttachingStatusChange = try #require(await maybeRoomAttachingStatusChange)
+        #expect(roomAttachingStatusChange.error == contributorStateChangeReason)
+
+        #expect(await !manager.testsOnly_hasTransientDisconnectTimeout(for: contributor))
     }
 
     // @specOneOf(1/2) CHA-RL4b8

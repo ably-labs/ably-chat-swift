@@ -67,6 +67,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         await self.init(
             status: nil,
             pendingDiscontinuityEvents: nil,
+            idsOfContributorsWithTransientDisconnectTimeout: nil,
             contributors: contributors,
             logger: logger,
             clock: clock
@@ -77,6 +78,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         internal init(
             testsOnly_status status: Status? = nil,
             testsOnly_pendingDiscontinuityEvents pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]? = nil,
+            testsOnly_idsOfContributorsWithTransientDisconnectTimeout idsOfContributorsWithTransientDisconnectTimeout: Set<Contributor.ID>? = nil,
             contributors: [Contributor],
             logger: InternalLogger,
             clock: SimpleClock
@@ -84,6 +86,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             await self.init(
                 status: status,
                 pendingDiscontinuityEvents: pendingDiscontinuityEvents,
+                idsOfContributorsWithTransientDisconnectTimeout: idsOfContributorsWithTransientDisconnectTimeout,
                 contributors: contributors,
                 logger: logger,
                 clock: clock
@@ -94,13 +97,18 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     private init(
         status: Status?,
         pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]?,
+        idsOfContributorsWithTransientDisconnectTimeout: Set<Contributor.ID>?,
         contributors: [Contributor],
         logger: InternalLogger,
         clock: SimpleClock
     ) async {
         self.status = status ?? .initialized
         self.contributors = contributors
-        contributorAnnotations = .init(contributors: contributors, pendingDiscontinuityEvents: pendingDiscontinuityEvents ?? [:])
+        contributorAnnotations = .init(
+            contributors: contributors,
+            pendingDiscontinuityEvents: pendingDiscontinuityEvents ?? [:],
+            idsOfContributorsWithTransientDisconnectTimeout: idsOfContributorsWithTransientDisconnectTimeout ?? []
+        )
         self.logger = logger
         self.clock = clock
 
@@ -198,17 +206,36 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     /// Stores manager state relating to a given contributor.
     private struct ContributorAnnotation {
+        class TransientDisconnectTimeout: Identifiable {
+            /// A unique identifier for this timeout. This allows test cases to assert that one timeout has not been replaced by another.
+            var id = UUID()
+            /// The task that sleeps until the timeout period passes and then performs the timeout’s side effects. This will be `nil` if you have created a transient disconnect timeout using the `testsOnly_idsOfContributorsWithTransientDisconnectTimeout` manager initializer parameter.
+            var task: Task<Void, Error>?
+        }
+
         // TODO: Not clear whether there can be multiple or just one (asked in https://github.com/ably/specification/pull/200/files#r1781927850)
         var pendingDiscontinuityEvents: [ARTErrorInfo] = []
+        var transientDisconnectTimeout: TransientDisconnectTimeout?
+
+        var hasTransientDisconnectTimeout: Bool {
+            transientDisconnectTimeout != nil
+        }
     }
 
     /// Provides a `Dictionary`-like interface for storing manager state about individual contributors.
     private struct ContributorAnnotations {
         private var storage: [Contributor.ID: ContributorAnnotation]
 
-        init(contributors: [Contributor], pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]) {
+        init(
+            contributors: [Contributor],
+            pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]],
+            idsOfContributorsWithTransientDisconnectTimeout: Set<Contributor.ID>
+        ) {
             storage = contributors.reduce(into: [:]) { result, contributor in
-                result[contributor.id] = .init(pendingDiscontinuityEvents: pendingDiscontinuityEvents[contributor.id] ?? [])
+                result[contributor.id] = .init(
+                    pendingDiscontinuityEvents: pendingDiscontinuityEvents[contributor.id] ?? [],
+                    transientDisconnectTimeout: idsOfContributorsWithTransientDisconnectTimeout.contains(contributor.id) ? .init() : nil
+                )
             }
         }
 
@@ -276,6 +303,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         /// - the manager has recorded all pending discontinuity events provoked by the state change (you can retrieve these using ``testsOnly_pendingDiscontinuityEventsForContributor(at:)``)
         /// - the manager has performed all status changes provoked by the state change
         /// - the manager has performed all contributor actions provoked by the state change, namely calls to ``RoomLifecycleContributorChannel.detach()`` or ``RoomLifecycleContributor.emitDiscontinuity(_:)``
+        /// - the manager has recorded all transient disconnect timeouts provoked by the state change (you can retrieve this information using ``testsOnly_hasTransientDisconnectTimeout(for:) or ``testsOnly_idOfTransientDisconnectTimeout(for:)``)
         internal func testsOnly_subscribeToHandledContributorStateChanges() -> Subscription<ARTChannelStateChange> {
             let subscription = Subscription<ARTChannelStateChange>(bufferingPolicy: .unbounded)
             stateChangeHandledSubscriptions.append(subscription)
@@ -284,6 +312,14 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
         internal func testsOnly_pendingDiscontinuityEvents(for contributor: Contributor) -> [ARTErrorInfo] {
             contributorAnnotations[contributor].pendingDiscontinuityEvents
+        }
+
+        internal func testsOnly_hasTransientDisconnectTimeout(for contributor: Contributor) -> Bool {
+            contributorAnnotations[contributor].hasTransientDisconnectTimeout
+        }
+
+        internal func testsOnly_idOfTransientDisconnectTimeout(for contributor: Contributor) -> UUID? {
+            contributorAnnotations[contributor].transientDisconnectTimeout?.id
         }
     #endif
 
@@ -363,6 +399,23 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                 }
 
                 changeStatus(to: .suspended(error: reason))
+            }
+        case .attaching:
+            if !hasOperationInProgress, !contributorAnnotations[contributor].hasTransientDisconnectTimeout {
+                // CHA-RL4b7
+                let transientDisconnectTimeout = ContributorAnnotation.TransientDisconnectTimeout()
+                contributorAnnotations[contributor].transientDisconnectTimeout = transientDisconnectTimeout
+                logger.log(message: "Starting transient disconnect timeout \(transientDisconnectTimeout.id) for \(contributor)", level: .debug)
+                transientDisconnectTimeout.task = Task {
+                    do {
+                        try await clock.sleep(timeInterval: 5)
+                    } catch {
+                        logger.log(message: "Transient disconnect timeout \(transientDisconnectTimeout.id) for \(contributor) was interrupted, error \(error)", level: .debug)
+                    }
+                    logger.log(message: "Transient disconnect timeout \(transientDisconnectTimeout.id) for \(contributor) completed", level: .debug)
+                    contributorAnnotations[contributor].transientDisconnectTimeout = nil
+                    changeStatus(to: .attachingDueToContributorStateChange(error: stateChange.reason))
+                }
             }
         default:
             break
