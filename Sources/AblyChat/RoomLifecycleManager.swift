@@ -365,6 +365,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
 
         #if DEBUG
+            logger.log(message: "Emitting state change handled event for \(stateChange)", level: .debug)
             for subscription in stateChangeHandledSubscriptions {
                 subscription.emit(stateChange)
             }
