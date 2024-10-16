@@ -187,9 +187,9 @@ struct RoomLifecycleManagerTests {
         async let _ = try await manager.performAttachOperation()
 
         // Then: It emits a status change to ATTACHING, and its current state is ATTACHING
-        #expect(try #require(await statusChange).current == .attaching)
+        #expect(try #require(await statusChange).current == .attaching(error: nil))
 
-        #expect(await manager.current == .attaching)
+        #expect(await manager.current == .attaching(error: nil))
 
         // Post-test: Now that we’ve seen the ATTACHING state, allow the contributor `attach` call to complete
         contributorAttachOperation.complete(result: .success)
@@ -848,7 +848,7 @@ struct RoomLifecycleManagerTests {
         // Given: A RoomLifecycleManager, with a room lifecycle operation in progress
         let contributor = createContributor()
         let manager = await createManager(
-            forTestingWhatHappensWhenCurrentlyIn: .attaching(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
+            forTestingWhatHappensWhenCurrentlyIn: .attachingDueToAttachOperation(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
             contributors: [contributor]
         )
 
@@ -910,7 +910,7 @@ struct RoomLifecycleManagerTests {
         // Given: A RoomLifecycleManager, with a room lifecycle operation in progress
         let contributor = createContributor()
         let manager = await createManager(
-            forTestingWhatHappensWhenCurrentlyIn: .attaching(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
+            forTestingWhatHappensWhenCurrentlyIn: .attachingDueToAttachOperation(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
             contributors: [contributor]
         )
 

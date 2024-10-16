@@ -139,7 +139,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     internal enum Status: Equatable {
         case initialized
-        case attaching(attachOperationID: UUID)
+        case attachingDueToAttachOperation(attachOperationID: UUID)
+        case attachingDueToContributorStateChange(error: ARTErrorInfo?)
         case attached
         case detaching(detachOperationID: UUID)
         case detached
@@ -152,8 +153,10 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             switch self {
             case .initialized:
                 .initialized
-            case .attaching:
-                .attaching
+            case .attachingDueToAttachOperation:
+                .attaching(error: nil)
+            case let .attachingDueToContributorStateChange(error: error):
+                .attaching(error: error)
             case .attached:
                 .attached
             case .detaching:
@@ -173,7 +176,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
         fileprivate var operationID: UUID? {
             switch self {
-            case let .attaching(attachOperationID):
+            case let .attachingDueToAttachOperation(attachOperationID):
                 attachOperationID
             case let .detaching(detachOperationID):
                 detachOperationID
@@ -184,7 +187,8 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                  .attached,
                  .detached,
                  .failed,
-                 .released:
+                 .released,
+                 .attachingDueToContributorStateChange:
                 nil
             }
         }
@@ -511,7 +515,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         case .released:
             // CHA-RL1c
             throw ARTErrorInfo(chatError: .roomIsReleased)
-        case .initialized, .suspended, .attaching, .detached, .detaching, .failed:
+        case .initialized, .suspended, .attachingDueToAttachOperation, .attachingDueToContributorStateChange, .detached, .detaching, .failed:
             break
         }
 
@@ -521,7 +525,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
 
         // CHA-RL1e
-        changeStatus(to: .attaching(attachOperationID: operationID))
+        changeStatus(to: .attachingDueToAttachOperation(attachOperationID: operationID))
 
         // CHA-RL1f
         for contributor in contributors {
@@ -622,7 +626,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         case .failed:
             // CHA-RL2d
             throw ARTErrorInfo(chatError: .roomInFailedState)
-        case .initialized, .suspended, .attaching, .attached, .detaching:
+        case .initialized, .suspended, .attachingDueToAttachOperation, .attachingDueToContributorStateChange, .attached, .detaching:
             break
         }
 
@@ -712,7 +716,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             // See note on waitForCompletionOfOperationWithID for the current need for this force try
             // swiftlint:disable:next force_try
             return try! await waitForCompletionOfOperationWithID(releaseOperationID, waitingOperationID: operationID)
-        case .initialized, .attached, .attaching, .detaching, .suspended, .failed:
+        case .initialized, .attached, .attachingDueToAttachOperation, .attachingDueToContributorStateChange, .detaching, .suspended, .failed:
             break
         }
 
