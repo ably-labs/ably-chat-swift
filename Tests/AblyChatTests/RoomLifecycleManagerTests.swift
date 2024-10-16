@@ -28,15 +28,13 @@ struct RoomLifecycleManagerTests {
     }
 
     private func createManager(
-        forTestingWhatHappensWhenCurrentlyIn current: RoomLifecycle? = nil,
-        forTestingWhatHappensWhenHasOperationInProgress hasOperationInProgress: Bool? = nil,
+        forTestingWhatHappensWhenCurrentlyIn status: RoomLifecycleManager<MockRoomLifecycleContributor>.Status? = nil,
         forTestingWhatHappensWhenHasPendingDiscontinuityEvents pendingDiscontinuityEvents: [MockRoomLifecycleContributor.ID: [ARTErrorInfo]]? = nil,
         contributors: [MockRoomLifecycleContributor] = [],
         clock: SimpleClock = MockSimpleClock()
     ) async -> RoomLifecycleManager<MockRoomLifecycleContributor> {
         await .init(
-            testsOnly_current: current,
-            testsOnly_hasOperationInProgress: hasOperationInProgress,
+            testsOnly_status: status,
             testsOnly_pendingDiscontinuityEvents: pendingDiscontinuityEvents,
             contributors: contributors,
             logger: TestLogger(),
@@ -99,7 +97,9 @@ struct RoomLifecycleManagerTests {
     @Test
     func attach_whenReleasing() async throws {
         // Given: A RoomLifecycleManager in the RELEASING state
-        let manager = await createManager(forTestingWhatHappensWhenCurrentlyIn: .releasing)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .releasing(releaseOperationID: UUID() /* arbitrary */ )
+        )
 
         // When: `performAttachOperation()` is called on the lifecycle manager
         // Then: It throws a roomIsReleasing error
@@ -123,6 +123,54 @@ struct RoomLifecycleManagerTests {
         } throws: { error in
             isChatError(error, withCode: .roomIsReleased)
         }
+    }
+
+    // @spec CHA-RL1d
+    @Test
+    func attach_ifOtherOperationInProgress_waitsForItToComplete() async throws {
+        // Given: A RoomLifecycleManager with a DETACH lifecycle operation in progress (the fact that it is a DETACH is not important; it is just an operation whose execution it is easy to prolong and subsequently complete, which is helpful for this test)
+        let contributorDetachOperation = SignallableChannelOperation()
+        let manager = await createManager(
+            contributors: [
+                createContributor(
+                    // Arbitrary, allows the ATTACH to eventually complete
+                    attachBehavior: .complete(.success),
+                    // This allows us to prolong the execution of the DETACH triggered in (1)
+                    detachBehavior: contributorDetachOperation.behavior
+                ),
+            ]
+        )
+
+        let detachOperationID = UUID()
+        let attachOperationID = UUID()
+
+        let statusChangeSubscription = await manager.onChange(bufferingPolicy: .unbounded)
+        // Wait for the manager to enter DETACHING; this our sign that the DETACH operation triggered in (1) has started
+        async let detachingStatusChange = statusChangeSubscription.first { $0.current == .detaching }
+
+        // (1) This is the "DETACH lifecycle operation in progress" mentioned in Given
+        async let _ = manager.performDetachOperation(testsOnly_forcingOperationID: detachOperationID)
+        _ = await detachingStatusChange
+
+        let operationWaitEventSubscription = await manager.testsOnly_subscribeToOperationWaitEvents()
+        async let attachedWaitingForDetachedEvent = operationWaitEventSubscription.first { operationWaitEvent in
+            operationWaitEvent == .init(waitingOperationID: attachOperationID, waitedOperationID: detachOperationID)
+        }
+
+        // When: `performAttachOperation()` is called on the lifecycle manager
+        async let attachResult: Void = manager.performAttachOperation(testsOnly_forcingOperationID: attachOperationID)
+
+        // Then:
+        // - the manager informs us that the ATTACH operation is waiting for the DETACH operation to complete
+        // - when the DETACH completes, the ATTACH operation proceeds (which we check here by verifying that it eventually completes) — note that (as far as I can tell) there is no way to test that the ATTACH operation would have proceeded _only if_ the DETACH had completed; the best we can do is allow the manager to tell us that that this is indeed what it’s doing (which is what we check for in the previous bullet)
+
+        _ = try #require(await attachedWaitingForDetachedEvent)
+
+        // Allow the DETACH to complete
+        contributorDetachOperation.complete(result: .success /* arbitrary */ )
+
+        // Check that ATTACH completes
+        try await attachResult
     }
 
     // @spec CHA-RL1e
@@ -392,7 +440,9 @@ struct RoomLifecycleManagerTests {
     @Test
     func detach_whenReleasing() async throws {
         // Given: A RoomLifecycleManager in the RELEASING state
-        let manager = await createManager(forTestingWhatHappensWhenCurrentlyIn: .releasing)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .releasing(releaseOperationID: UUID() /* arbitrary */ )
+        )
 
         // When: `performDetachOperation()` is called on the lifecycle manager
         // Then: It throws a roomIsReleasing error
@@ -600,6 +650,52 @@ struct RoomLifecycleManagerTests {
         #expect(await contributor.channel.detachCallCount == 0)
     }
 
+    // @specPartial CHA-RL3c - This is marked as specPartial because at time of writing the spec point CHA-RL3c has been accidentally duplicated to specify two separate behaviours. TODO: change this one to @spec once spec fixed (see discussion in https://github.com/ably/specification/pull/200#discussion_r1763770348)
+    @Test
+    func release_whenReleasing() async throws {
+        // Given: A RoomLifecycleManager with a RELEASE lifecycle operation in progress, and hence in the RELEASING state
+        let contributorDetachOperation = SignallableChannelOperation()
+        let contributor = createContributor(
+            // This allows us to prolong the execution of the RELEASE triggered in (1)
+            detachBehavior: contributorDetachOperation.behavior
+        )
+        let manager = await createManager(contributors: [contributor])
+
+        let firstReleaseOperationID = UUID()
+        let secondReleaseOperationID = UUID()
+
+        let statusChangeSubscription = await manager.onChange(bufferingPolicy: .unbounded)
+        // Wait for the manager to enter RELEASING; this our sign that the DETACH operation triggered in (1) has started
+        async let releasingStatusChange = statusChangeSubscription.first { $0.current == .releasing }
+
+        // (1) This is the "RELEASE lifecycle operation in progress" mentioned in Given
+        async let _ = manager.performReleaseOperation(testsOnly_forcingOperationID: firstReleaseOperationID)
+        _ = await releasingStatusChange
+
+        let operationWaitEventSubscription = await manager.testsOnly_subscribeToOperationWaitEvents()
+        async let secondReleaseWaitingForFirstReleaseEvent = operationWaitEventSubscription.first { operationWaitEvent in
+            operationWaitEvent == .init(waitingOperationID: secondReleaseOperationID, waitedOperationID: firstReleaseOperationID)
+        }
+
+        // When: `performReleaseOperation()` is called on the lifecycle manager
+        async let secondReleaseResult: Void = manager.performReleaseOperation(testsOnly_forcingOperationID: secondReleaseOperationID)
+
+        // Then:
+        // - the manager informs us that the second RELEASE operation is waiting for first RELEASE operation to complete
+        // - when the first RELEASE completes, the second RELEASE operation also completes
+        // - the second RELEASE operation does not perform any side-effects (which we check here by confirming that the CHA-RL3d contributor detach only happened once, i.e. was only performed by the first RELEASE operation)
+
+        _ = try #require(await secondReleaseWaitingForFirstReleaseEvent)
+
+        // Allow the first RELEASE to complete
+        contributorDetachOperation.complete(result: .success)
+
+        // Check that the second RELEASE completes
+        await secondReleaseResult
+
+        #expect(await contributor.channel.detachCallCount == 1)
+    }
+
     // @specPartial CHA-RL3c - Haven’t implemented the part that refers to "transient disconnect timeouts"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/48)
     @Test
     func release_transitionsToReleasing() async throws {
@@ -751,7 +847,10 @@ struct RoomLifecycleManagerTests {
     func contributorUpdate_withResumedFalse_withOperationInProgress_recordsPendingDiscontinuityEvent() async throws {
         // Given: A RoomLifecycleManager, with a room lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: true, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .attaching(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
+            contributors: [contributor]
+        )
 
         // When: A contributor emits an UPDATE event with `resumed` flag set to false
         let contributorStateChange = ARTChannelStateChange(
@@ -779,7 +878,10 @@ struct RoomLifecycleManagerTests {
     func contributorUpdate_withResumedTrue_withNoOperationInProgress_emitsDiscontinuityEvent() async throws {
         // Given: A RoomLifecycleManager, with no room lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // case arbitrary, just care that no operation is in progress
+            contributors: [contributor]
+        )
 
         // When: A contributor emits an UPDATE event with `resumed` flag set to false
         let contributorStateChange = ARTChannelStateChange(
@@ -807,7 +909,10 @@ struct RoomLifecycleManagerTests {
     func contributorAttachEvent_withResumeFalse_withOperationInProgress_recordsPendingDiscontinuityEvent() async throws {
         // Given: A RoomLifecycleManager, with a room lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: true, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .attaching(attachOperationID: UUID()), // case and ID arbitrary, just care that an operation is in progress
+            contributors: [contributor]
+        )
 
         // When: A contributor emits an ATTACHED event with `resumed` flag set to false
         let contributorStateChange = ARTChannelStateChange(
@@ -839,7 +944,10 @@ struct RoomLifecycleManagerTests {
             createContributor(detachBehavior: .success),
             createContributor(detachBehavior: .success),
         ]
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: contributors)
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // case arbitrary, just care that no operation is in progress
+            contributors: contributors
+        )
 
         let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
         async let failedStatusChange = roomStatusSubscription.failedElements().first { _ in true }
@@ -871,7 +979,7 @@ struct RoomLifecycleManagerTests {
     // @specOneOf(1/2) CHA-RL4b8
     @Test
     func contributorAttachedEvent_withNoOperationInProgress_roomNotAttached_allContributorsAttached() async throws {
-        // Given: A RoomLifecycleManager, not in the ATTACHED state, all of whose contributors are in the ATTACHED state (to satisfy the condition of CHA-RL4b8; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
+        // Given: A RoomLifecycleManager, with no operation in progress and not in the ATTACHED state, all of whose contributors are in the ATTACHED state (to satisfy the condition of CHA-RL4b8; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
         let contributors = [
             createContributor(initialState: .attached),
             createContributor(initialState: .attached),
@@ -879,7 +987,6 @@ struct RoomLifecycleManagerTests {
 
         let manager = await createManager(
             forTestingWhatHappensWhenCurrentlyIn: .initialized, // arbitrary non-ATTACHED
-            forTestingWhatHappensWhenHasOperationInProgress: false,
             contributors: contributors
         )
 
@@ -905,16 +1012,15 @@ struct RoomLifecycleManagerTests {
     // @specOneOf(2/2) CHA-RL4b8 - Tests that the specified side effect doesn’t happen if part of the condition (i.e. all contributors now being ATTACHED) is not met
     @Test
     func contributorAttachedEvent_withNoOperationInProgress_roomNotAttached_notAllContributorsAttached() async throws {
-        // Given: A RoomLifecycleManager, not in the ATTACHED state, one of whose contributors is not in the ATTACHED state state (to simulate the condition of CHA-RL4b8 not being met; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
+        // Given: A RoomLifecycleManager, with no operation in progress and not in the ATTACHED state, one of whose contributors is not in the ATTACHED state state (to simulate the condition of CHA-RL4b8 not being met; for the purposes of this test I don’t care that they’re in this state even _before_ the state change of the When)
         let contributors = [
             createContributor(initialState: .attached),
             createContributor(initialState: .detached),
         ]
 
-        let initialManagerState = RoomLifecycle.initialized // arbitrary non-ATTACHED
+        let initialManagerStatus = RoomLifecycleManager<MockRoomLifecycleContributor>.Status.detached // arbitrary non-ATTACHED, no-operation-in-progress
         let manager = await createManager(
-            forTestingWhatHappensWhenCurrentlyIn: initialManagerState,
-            forTestingWhatHappensWhenHasOperationInProgress: false,
+            forTestingWhatHappensWhenCurrentlyIn: initialManagerStatus,
             contributors: contributors
         )
 
@@ -932,7 +1038,7 @@ struct RoomLifecycleManagerTests {
         }
 
         // Then: The room status does not change
-        #expect(await manager.current == initialManagerState)
+        #expect(await manager.current == initialManagerStatus.toRoomLifecycle)
     }
 
     // @specPartial CHA-RL4b9 - Haven’t implemented the part that refers to "transient disconnect timeouts"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/48). Nor have I implemented "the room enters the RETRY loop"; TODO do this (https://github.com/ably-labs/ably-chat-swift/issues/51)
@@ -940,7 +1046,10 @@ struct RoomLifecycleManagerTests {
     func contributorSuspendedEvent_withNoOperationInProgress() async throws {
         // Given: A RoomLifecycleManager with no lifecycle operation in progress
         let contributor = createContributor()
-        let manager = await createManager(forTestingWhatHappensWhenHasOperationInProgress: false, contributors: [contributor])
+        let manager = await createManager(
+            forTestingWhatHappensWhenCurrentlyIn: .initialized, // case arbitrary, just care that no operation is in progress
+            contributors: [contributor]
+        )
 
         let roomStatusSubscription = await manager.onChange(bufferingPolicy: .unbounded)
         async let maybeSuspendedRoomStatusChange = roomStatusSubscription.suspendedElements().first { _ in true }

@@ -41,55 +41,23 @@ internal protocol RoomLifecycleContributor: Identifiable, Sendable {
 }
 
 internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
-    /// Stores manager state relating to a given contributor.
-    private struct ContributorAnnotation {
-        // TODO: Not clear whether there can be multiple or just one (asked in https://github.com/ably/specification/pull/200/files#r1781927850)
-        var pendingDiscontinuityEvents: [ARTErrorInfo] = []
-    }
-
-    internal private(set) var current: RoomLifecycle
-    // TODO: This currently allows the the tests to inject a value in order to test the spec points that are predicated on whether “a channel lifecycle operation is in progress”. In https://github.com/ably-labs/ably-chat-swift/issues/52 we’ll set this property based on whether there actually is a lifecycle operation in progress.
-    private let hasOperationInProgress: Bool
-    /// Manager state that relates to individual contributors, keyed by contributors’ ``Contributor.id``. Stored separately from ``contributors`` so that the latter can be a `let`, to make it clear that the contributors remain fixed for the lifetime of the manager.
-    private var contributorAnnotations: ContributorAnnotations
-
-    /// Provides a `Dictionary`-like interface for storing manager state about individual contributors.
-    private struct ContributorAnnotations {
-        private var storage: [Contributor.ID: ContributorAnnotation]
-
-        init(contributors: [Contributor], pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]) {
-            storage = contributors.reduce(into: [:]) { result, contributor in
-                result[contributor.id] = .init(pendingDiscontinuityEvents: pendingDiscontinuityEvents[contributor.id] ?? [])
-            }
-        }
-
-        /// It is a programmer error to call this subscript getter with a contributor that was not one of those passed to ``init(contributors:pendingDiscontinuityEvents)``.
-        subscript(_ contributor: Contributor) -> ContributorAnnotation {
-            get {
-                guard let annotation = storage[contributor.id] else {
-                    preconditionFailure("Expected annotation for \(contributor)")
-                }
-                return annotation
-            }
-
-            set {
-                storage[contributor.id] = newValue
-            }
-        }
-
-        mutating func clearPendingDiscontinuityEvents() {
-            storage = storage.mapValues { annotation in
-                var newAnnotation = annotation
-                newAnnotation.pendingDiscontinuityEvents = []
-                return newAnnotation
-            }
-        }
-    }
+    // MARK: - Constant properties
 
     private let logger: InternalLogger
     private let clock: SimpleClock
     private let contributors: [Contributor]
+
+    // MARK: - Variable properties
+
+    private var status: Status
+    /// Manager state that relates to individual contributors, keyed by contributors’ ``Contributor.id``. Stored separately from ``contributors`` so that the latter can be a `let`, to make it clear that the contributors remain fixed for the lifetime of the manager.
+    private var contributorAnnotations: ContributorAnnotations
     private var listenForStateChangesTask: Task<Void, Never>!
+    // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
+    private var subscriptions: [Subscription<RoomStatusChange>] = []
+    private var operationResultContinuations = OperationResultContinuations()
+
+    // MARK: - Initializers and `deinit`
 
     internal init(
         contributors: [Contributor],
@@ -97,8 +65,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         clock: SimpleClock
     ) async {
         await self.init(
-            current: nil,
-            hasOperationInProgress: nil,
+            status: nil,
             pendingDiscontinuityEvents: [:],
             contributors: contributors,
             logger: logger,
@@ -108,16 +75,14 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
     #if DEBUG
         internal init(
-            testsOnly_current current: RoomLifecycle? = nil,
-            testsOnly_hasOperationInProgress hasOperationInProgress: Bool? = nil,
+            testsOnly_status status: Status? = nil,
             testsOnly_pendingDiscontinuityEvents pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]? = nil,
             contributors: [Contributor],
             logger: InternalLogger,
             clock: SimpleClock
         ) async {
             await self.init(
-                current: current,
-                hasOperationInProgress: hasOperationInProgress,
+                status: status,
                 pendingDiscontinuityEvents: pendingDiscontinuityEvents,
                 contributors: contributors,
                 logger: logger,
@@ -127,15 +92,13 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     #endif
 
     private init(
-        current: RoomLifecycle?,
-        hasOperationInProgress: Bool?,
+        status: Status?,
         pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]?,
         contributors: [Contributor],
         logger: InternalLogger,
         clock: SimpleClock
     ) async {
-        self.current = current ?? .initialized
-        self.hasOperationInProgress = hasOperationInProgress ?? false
+        self.status = status ?? .initialized
         self.contributors = contributors
         contributorAnnotations = .init(contributors: contributors, pendingDiscontinuityEvents: pendingDiscontinuityEvents ?? [:])
         self.logger = logger
@@ -172,20 +135,130 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         listenForStateChangesTask.cancel()
     }
 
-    #if DEBUG
-        internal func testsOnly_pendingDiscontinuityEvents(for contributor: Contributor) -> [ARTErrorInfo] {
-            contributorAnnotations[contributor].pendingDiscontinuityEvents
-        }
-    #endif
+    // MARK: - Type for room status
 
-    // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
-    private var subscriptions: [Subscription<RoomStatusChange>] = []
+    internal enum Status: Equatable {
+        case initialized
+        case attaching(attachOperationID: UUID)
+        case attached
+        case detaching(detachOperationID: UUID)
+        case detached
+        case suspended(error: ARTErrorInfo)
+        case failed(error: ARTErrorInfo)
+        case releasing(releaseOperationID: UUID)
+        case released
+
+        internal var toRoomLifecycle: RoomLifecycle {
+            switch self {
+            case .initialized:
+                .initialized
+            case .attaching:
+                .attaching
+            case .attached:
+                .attached
+            case .detaching:
+                .detaching
+            case .detached:
+                .detached
+            case let .suspended(error):
+                .suspended(error: error)
+            case let .failed(error):
+                .failed(error: error)
+            case .releasing:
+                .releasing
+            case .released:
+                .released
+            }
+        }
+
+        fileprivate var operationID: UUID? {
+            switch self {
+            case let .attaching(attachOperationID):
+                attachOperationID
+            case let .detaching(detachOperationID):
+                detachOperationID
+            case let .releasing(releaseOperationID):
+                releaseOperationID
+            case .suspended,
+                 .initialized,
+                 .attached,
+                 .detached,
+                 .failed,
+                 .released:
+                nil
+            }
+        }
+    }
+
+    // MARK: - Types for contributor annotations
+
+    /// Stores manager state relating to a given contributor.
+    private struct ContributorAnnotation {
+        // TODO: Not clear whether there can be multiple or just one (asked in https://github.com/ably/specification/pull/200/files#r1781927850)
+        var pendingDiscontinuityEvents: [ARTErrorInfo] = []
+    }
+
+    /// Provides a `Dictionary`-like interface for storing manager state about individual contributors.
+    private struct ContributorAnnotations {
+        private var storage: [Contributor.ID: ContributorAnnotation]
+
+        init(contributors: [Contributor], pendingDiscontinuityEvents: [Contributor.ID: [ARTErrorInfo]]) {
+            storage = contributors.reduce(into: [:]) { result, contributor in
+                result[contributor.id] = .init(pendingDiscontinuityEvents: pendingDiscontinuityEvents[contributor.id] ?? [])
+            }
+        }
+
+        /// It is a programmer error to call this subscript getter with a contributor that was not one of those passed to ``init(contributors:pendingDiscontinuityEvents)``.
+        subscript(_ contributor: Contributor) -> ContributorAnnotation {
+            get {
+                guard let annotation = storage[contributor.id] else {
+                    preconditionFailure("Expected annotation for \(contributor)")
+                }
+                return annotation
+            }
+
+            set {
+                storage[contributor.id] = newValue
+            }
+        }
+
+        mutating func clearPendingDiscontinuityEvents() {
+            storage = storage.mapValues { annotation in
+                var newAnnotation = annotation
+                newAnnotation.pendingDiscontinuityEvents = []
+                return newAnnotation
+            }
+        }
+    }
+
+    // MARK: - Room status and its changes
+
+    internal var current: RoomLifecycle {
+        status.toRoomLifecycle
+    }
 
     internal func onChange(bufferingPolicy: BufferingPolicy) -> Subscription<RoomStatusChange> {
         let subscription: Subscription<RoomStatusChange> = .init(bufferingPolicy: bufferingPolicy)
         subscriptions.append(subscription)
         return subscription
     }
+
+    /// Updates ``status`` and emits a status change event.
+    private func changeStatus(to new: Status) {
+        logger.log(message: "Transitioning from \(status) to \(new)", level: .info)
+        let previous = status
+        status = new
+        let statusChange = RoomStatusChange(current: status.toRoomLifecycle, previous: previous.toRoomLifecycle)
+        emitStatusChange(statusChange)
+    }
+
+    private func emitStatusChange(_ change: RoomStatusChange) {
+        for subscription in subscriptions {
+            subscription.emit(change)
+        }
+    }
+
+    // MARK: - Handling contributor state changes
 
     #if DEBUG
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
@@ -203,6 +276,10 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             let subscription = Subscription<ARTChannelStateChange>(bufferingPolicy: .unbounded)
             stateChangeHandledSubscriptions.append(subscription)
             return subscription
+        }
+
+        internal func testsOnly_pendingDiscontinuityEvents(for contributor: Contributor) -> [ARTErrorInfo] {
+            contributorAnnotations[contributor].pendingDiscontinuityEvents
         }
     #endif
 
@@ -247,7 +324,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
 
                     contributorAnnotations[contributor].pendingDiscontinuityEvents.append(reason)
                 }
-            } else if current != .attached {
+            } else if status != .attached {
                 if await (contributors.async.map { await $0.channel.state }.allSatisfy { $0 == .attached }) {
                     // CHA-RL4b8
                     logger.log(message: "Now that all contributors are ATTACHED, transitioning room to ATTACHED", level: .info)
@@ -294,24 +371,136 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         #endif
     }
 
-    /// Updates ``current`` and emits a status change event.
-    private func changeStatus(to new: RoomLifecycle) {
-        logger.log(message: "Transitioning from \(current) to \(new)", level: .info)
-        let previous = current
-        current = new
-        let statusChange = RoomStatusChange(current: current, previous: previous)
-        emitStatusChange(statusChange)
+    // MARK: - Operation handling
+
+    /// Whether the room lifecycle manager currently has a room lifecycle operation in progress.
+    ///
+    /// - Warning: I haven’t yet figured out the exact meaning of “has an operation in progress” — at what point is an operation considered to be no longer in progress? Is it the point at which the operation has updated the manager’s status to one that no longer indicates an in-progress operation (this is the meaning currently used by `hasOperationInProgress`)? Or is it the point at which the `bodyOf*Operation` method for that operation exits (i.e. the point at which ``performAnOperation(_:)`` considers the operation to have completed)? Does it matter? I’ve chosen to not think about this very much right now, but might need to revisit. See TODO against `emitPendingDiscontinuityEvents` in `bodyOfDetachOperation` for an example of something where these two notions of “has an operation in progress” are not equivalent.
+    private var hasOperationInProgress: Bool {
+        status.operationID != nil
     }
 
-    private func emitStatusChange(_ change: RoomStatusChange) {
-        for subscription in subscriptions {
-            subscription.emit(change)
+    /// Stores bookkeeping information needed for allowing one operation to await the result of another.
+    private struct OperationResultContinuations {
+        typealias Continuation = CheckedContinuation<Void, Error>
+
+        private var operationResultContinuationsByOperationID: [UUID: [Continuation]] = [:]
+
+        mutating func addContinuation(_ continuation: Continuation, forResultOfOperationWithID operationID: UUID) {
+            operationResultContinuationsByOperationID[operationID, default: []].append(continuation)
+        }
+
+        mutating func removeContinuationsForResultOfOperationWithID(_ waitedOperationID: UUID) -> [Continuation] {
+            operationResultContinuationsByOperationID.removeValue(forKey: waitedOperationID) ?? []
         }
     }
 
+    #if DEBUG
+        /// The manager emits an `OperationWaitEvent` each time one room lifecycle operation is going to wait for another to complete. These events are emitted to support testing of the manager; see ``testsOnly_subscribeToOperationWaitEvents``.
+        internal struct OperationWaitEvent: Equatable {
+            /// The ID of the operation which initiated the wait. It is waiting for the operation with ID ``waitedOperationID`` to complete.
+            internal var waitingOperationID: UUID
+            /// The ID of the operation whose completion will be awaited.
+            internal var waitedOperationID: UUID
+        }
+
+        // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
+        /// Supports the ``testsOnly_subscribeToOperationWaitEvents()`` method.
+        private var operationWaitEventSubscriptions: [Subscription<OperationWaitEvent>] = []
+
+        /// Returns a subscription which emits an event each time one room lifecycle operation is going to wait for another to complete.
+        internal func testsOnly_subscribeToOperationWaitEvents() -> Subscription<OperationWaitEvent> {
+            let subscription = Subscription<OperationWaitEvent>(bufferingPolicy: .unbounded)
+            operationWaitEventSubscriptions.append(subscription)
+            return subscription
+        }
+    #endif
+
+    /// Waits for the operation with ID `waitedOperationID` to complete, re-throwing any error thrown by that operation.
+    ///
+    /// Note that this method currently treats all waited operations as throwing. If you wish to wait for an operation that you _know_ to be non-throwing (which the RELEASE operation currently is) then you’ll need to call this method with `try!` or equivalent. (It might be possible to improve this in the future, but I didn’t want to put much time into figuring it out.)
+    ///
+    /// It is guaranteed that if you call this method from a manager-isolated method, and subsequently call ``operationWithID(_:,didCompleteWithResult:)`` from another manager-isolated method, then the call to this method will return.
+    ///
+    /// - Parameters:
+    ///   - waitedOperationID: The ID of the operation whose completion will be awaited.
+    ///   - waitingOperationID: The ID of the operation which is awaiting this result. Only used for logging.
+    private func waitForCompletionOfOperationWithID(
+        _ waitedOperationID: UUID,
+        waitingOperationID: UUID
+    ) async throws {
+        logger.log(message: "Operation \(waitingOperationID) started waiting for result of operation \(waitedOperationID)", level: .debug)
+
+        do {
+            try await withCheckedThrowingContinuation { (continuation: OperationResultContinuations.Continuation) in
+                // My “it is guaranteed” in the documentation for this method is really more of an “I hope that”, because it’s based on my pretty vague understanding of Swift concurrency concepts; namely, I believe that if you call this manager-isolated `async` method from another manager-isolated method, the initial synchronous part of this method — in particular the call to `addContinuation` below — will occur _before_ the call to this method suspends. (I think this can be roughly summarised as “calls to async methods on self don’t do actor hopping” but I could be completely misusing a load of Swift concurrency vocabulary there.)
+                operationResultContinuations.addContinuation(continuation, forResultOfOperationWithID: waitedOperationID)
+
+                #if DEBUG
+                    let operationWaitEvent = OperationWaitEvent(waitingOperationID: waitingOperationID, waitedOperationID: waitedOperationID)
+                    for subscription in operationWaitEventSubscriptions {
+                        subscription.emit(operationWaitEvent)
+                    }
+                #endif
+            }
+
+            logger.log(message: "Operation \(waitingOperationID) completed waiting for result of operation \(waitedOperationID), which completed successfully", level: .debug)
+        } catch {
+            logger.log(message: "Operation \(waitingOperationID) completed waiting for result of operation \(waitedOperationID), which threw error \(error)", level: .debug)
+        }
+    }
+
+    /// Operations should call this when they have completed, in order to complete any waits initiated by ``waitForCompletionOfOperationWithID(_:waitingOperationID:)``.
+    private func operationWithID(_ operationID: UUID, didCompleteWithResult result: Result<Void, Error>) {
+        logger.log(message: "Operation \(operationID) completed with result \(result)", level: .debug)
+        let continuationsToResume = operationResultContinuations.removeContinuationsForResultOfOperationWithID(operationID)
+
+        for continuation in continuationsToResume {
+            continuation.resume(with: result)
+        }
+    }
+
+    /// Executes a function that represents a room lifecycle operation.
+    ///
+    /// - Note: Note that `RoomLifecycleManager` does not implement any sort of mutual exclusion mechanism that _enforces_ that one room lifecycle operation must wait for another (e.g. it is _not_ a queue); each operation needs to implement its own logic for whether it should proceed in the presence of other in-progress operations.
+    ///
+    /// - Parameters:
+    ///   - forcedOperationID: Forces the operation to have a given ID. In combination with the ``testsOnly_subscribeToOperationWaitEvents`` API, this allows tests to verify that one test-initiated operation is waiting for another test-initiated operation.
+    ///   - body: The implementation of the operation to be performed. Once this function returns or throws an error, the operation is considered to have completed, and any waits for this operation’s completion initiated via ``waitForCompletionOfOperationWithID(_:waitingOperationID:)`` will complete.
+    private func performAnOperation<Failure: Error>(
+        forcingOperationID forcedOperationID: UUID?,
+        _ body: (UUID) async throws(Failure) -> Void
+    ) async throws(Failure) {
+        let operationID = forcedOperationID ?? UUID()
+        logger.log(message: "Performing operation \(operationID)", level: .debug)
+        let result: Result<Void, Failure>
+        do {
+            // My understanding (based on what the compiler allows me to do, and a vague understanding of how actors work) is that inside this closure you can write code as if it were a method on the manager itself — i.e. with synchronous access to the manager’s state. But I currently lack the Swift concurrency vocabulary to explain exactly why this is the case.
+            try await body(operationID)
+            result = .success(())
+        } catch {
+            result = .failure(error)
+        }
+
+        operationWithID(operationID, didCompleteWithResult: result.mapError { $0 })
+
+        try result.get()
+    }
+
+    // MARK: - ATTACH operation
+
     /// Implements CHA-RL1’s `ATTACH` operation.
-    internal func performAttachOperation() async throws {
-        switch current {
+    ///
+    /// - Parameters:
+    ///   - forcedOperationID: Allows tests to force the operation to have a given ID. In combination with the ``testsOnly_subscribeToOperationWaitEvents`` API, this allows tests to verify that one test-initiated operation is waiting for another test-initiated operation.
+    internal func performAttachOperation(testsOnly_forcingOperationID forcedOperationID: UUID? = nil) async throws {
+        try await performAnOperation(forcingOperationID: forcedOperationID) { operationID in
+            try await bodyOfAttachOperation(operationID: operationID)
+        }
+    }
+
+    private func bodyOfAttachOperation(operationID: UUID) async throws {
+        switch status {
         case .attached:
             // CHA-RL1a
             return
@@ -325,8 +514,13 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             break
         }
 
+        // CHA-RL1d
+        if let currentOperationID = status.operationID {
+            try? await waitForCompletionOfOperationWithID(currentOperationID, waitingOperationID: operationID)
+        }
+
         // CHA-RL1e
-        changeStatus(to: .attaching)
+        changeStatus(to: .attaching(attachOperationID: operationID))
 
         // CHA-RL1f
         for contributor in contributors {
@@ -366,6 +560,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         changeStatus(to: .attached)
 
         // CHA-RL1g2
+        // TODO: It’s not clear to me whether this is considered to be part of the ATTACH operation or not; see the note on the ``hasOperationInProgress`` property
         await emitPendingDiscontinuityEvents()
     }
 
@@ -400,9 +595,20 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
     }
 
+    // MARK: - DETACH operation
+
     /// Implements CHA-RL2’s DETACH operation.
-    internal func performDetachOperation() async throws {
-        switch current {
+    ///
+    /// - Parameters:
+    ///   - forcedOperationID: Allows tests to force the operation to have a given ID. In combination with the ``testsOnly_subscribeToOperationWaitEvents`` API, this allows tests to verify that one test-initiated operation is waiting for another test-initiated operation.
+    internal func performDetachOperation(testsOnly_forcingOperationID forcedOperationID: UUID? = nil) async throws {
+        try await performAnOperation(forcingOperationID: forcedOperationID) { operationID in
+            try await bodyOfDetachOperation(operationID: operationID)
+        }
+    }
+
+    private func bodyOfDetachOperation(operationID: UUID) async throws {
+        switch status {
         case .detached:
             // CHA-RL2a
             return
@@ -420,7 +626,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         }
 
         // CHA-RL2e
-        changeStatus(to: .detaching)
+        changeStatus(to: .detaching(detachOperationID: operationID))
 
         // CHA-RL2f
         var firstDetachError: Error?
@@ -448,7 +654,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
                     }
 
                     // This check is CHA-RL2h2
-                    if !current.isFailed {
+                    if !status.toRoomLifecycle.isFailed {
                         changeStatus(to: .failed(error: error))
                     }
                 default:
@@ -479,9 +685,20 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
         changeStatus(to: .detached)
     }
 
-    /// Implementes CHA-RL3’s RELEASE operation.
-    internal func performReleaseOperation() async {
-        switch current {
+    // MARK: - RELEASE operation
+
+    /// Implements CHA-RL3’s RELEASE operation.
+    ///
+    /// - Parameters:
+    ///   - forcedOperationID: Allows tests to force the operation to have a given ID. In combination with the ``testsOnly_subscribeToOperationWaitEvents`` API, this allows tests to verify that one test-initiated operation is waiting for another test-initiated operation.
+    internal func performReleaseOperation(testsOnly_forcingOperationID forcedOperationID: UUID? = nil) async {
+        await performAnOperation(forcingOperationID: forcedOperationID) { operationID in
+            await bodyOfReleaseOperation(operationID: operationID)
+        }
+    }
+
+    private func bodyOfReleaseOperation(operationID: UUID) async {
+        switch status {
         case .released:
             // CHA-RL3a
             return
@@ -489,11 +706,17 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
             // CHA-RL3b
             changeStatus(to: .released)
             return
-        case .releasing, .initialized, .attached, .attaching, .detaching, .suspended, .failed:
+        case let .releasing(releaseOperationID):
+            // CHA-RL3c
+            // See note on waitForCompletionOfOperationWithID for the current need for this force try
+            // swiftlint:disable:next force_try
+            return try! await waitForCompletionOfOperationWithID(releaseOperationID, waitingOperationID: operationID)
+        case .initialized, .attached, .attaching, .detaching, .suspended, .failed:
             break
         }
 
-        changeStatus(to: .releasing)
+        // CHA-RL3c
+        changeStatus(to: .releasing(releaseOperationID: operationID))
 
         // CHA-RL3d
         for contributor in contributors {
