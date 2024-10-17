@@ -12,6 +12,13 @@ extension Subscription where Element == RoomStatusChange {
         var error: ARTErrorInfo
     }
 
+    struct StatusChangeWithOptionalError {
+        /// A status change whose `current` has an optional associated error; ``error`` provides access to this error.
+        var statusChange: RoomStatusChange
+        /// The error associated with `statusChange.current`.
+        var error: ARTErrorInfo?
+    }
+
     func suspendedElements() async -> AsyncCompactMapSequence<Subscription<RoomStatusChange>, Subscription<RoomStatusChange>.StatusChangeWithError> {
         compactMap { statusChange in
             if case let .suspended(error) = statusChange.current {
@@ -26,6 +33,16 @@ extension Subscription where Element == RoomStatusChange {
         compactMap { statusChange in
             if case let .failed(error) = statusChange.current {
                 StatusChangeWithError(statusChange: statusChange, error: error)
+            } else {
+                nil
+            }
+        }
+    }
+
+    func attachingElements() async -> AsyncCompactMapSequence<Subscription<RoomStatusChange>, Subscription<RoomStatusChange>.StatusChangeWithOptionalError> {
+        compactMap { statusChange in
+            if case let .attaching(error) = statusChange.current {
+                StatusChangeWithOptionalError(statusChange: statusChange, error: error)
             } else {
                 nil
             }

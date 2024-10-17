@@ -172,7 +172,7 @@ struct ContentView: View {
     func showRoomStatus() async throws {
         for await status in try await room().status.onChange(bufferingPolicy: .unbounded) {
             withAnimation {
-                if status.current == .attaching {
+                if status.current.isAttaching {
                     statusInfo = "\(status.current)...".capitalized
                 } else {
                     statusInfo = "\(status.current)".capitalized

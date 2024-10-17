@@ -7,7 +7,7 @@ public protocol RoomStatus: AnyObject, Sendable {
 
 public enum RoomLifecycle: Sendable, Equatable {
     case initialized
-    case attaching
+    case attaching(error: ARTErrorInfo?)
     case attached
     case detaching
     case detached
@@ -20,6 +20,14 @@ public enum RoomLifecycle: Sendable, Equatable {
     //
     // 1. testing (e.g.  `#expect(status.isFailed)`)
     // 2. testing that a status does _not_ have a particular case (e.g. if !status.isFailed), which a `case` statement cannot succinctly express
+
+    public var isAttaching: Bool {
+        if case .attaching = self {
+            true
+        } else {
+            false
+        }
+    }
 
     public var isSuspended: Bool {
         if case .suspended = self {
