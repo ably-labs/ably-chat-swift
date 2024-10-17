@@ -66,7 +66,7 @@ internal actor RoomLifecycleManager<Contributor: RoomLifecycleContributor> {
     ) async {
         await self.init(
             status: nil,
-            pendingDiscontinuityEvents: [:],
+            pendingDiscontinuityEvents: nil,
             contributors: contributors,
             logger: logger,
             clock: clock
