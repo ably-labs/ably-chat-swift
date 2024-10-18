@@ -67,7 +67,7 @@ actor MockRoom: Room {
     nonisolated lazy var status: any RoomStatus = MockRoomStatus(clientID: clientID, roomID: roomID)
 
     func attach() async throws {
-        fatalError("Not yet implemented")
+        print("Mock client attached to room with roomID: \(roomID)")
     }
 
     func detach() async throws {
@@ -151,7 +151,7 @@ actor MockRoomReactions: RoomReactions {
     private func createSubscription() -> MockSubscription<Reaction> {
         let subscription = MockSubscription<Reaction>(randomElement: {
             Reaction(
-                type: ReactionType.allCases.randomElement()!.rawValue,
+                type: ReactionType.allCases.randomElement()!.emoji,
                 metadata: [:],
                 headers: [:],
                 createdAt: Date(),

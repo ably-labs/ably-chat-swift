@@ -74,7 +74,7 @@ internal final class DefaultMessages: Messages, EmitsDiscontinuities {
                 }
 
                 let metadata = data["metadata"] as? Metadata
-                let headers = try message.extras?.toJSON()["headers"] as? Headers
+                let headers = extras["headers"] as? Headers
 
                 let message = Message(
                     timeserial: timeserial,

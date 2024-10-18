@@ -23,6 +23,7 @@ internal actor DefaultRoom: Room {
     private let chatAPI: ChatAPI
 
     public nonisolated let messages: any Messages
+    private let _reactions: (any RoomReactions)?
 
     // Exposed for testing.
     private nonisolated let realtime: RealtimeClient
@@ -53,6 +54,12 @@ internal actor DefaultRoom: Room {
             roomID: roomID,
             clientID: clientId
         )
+
+        _reactions = options.reactions != nil ? await DefaultRoomReactions(
+            realtime: realtime,
+            roomID: roomID,
+            logger: logger
+        ) : nil
     }
 
     public nonisolated var presence: any Presence {
@@ -60,7 +67,11 @@ internal actor DefaultRoom: Room {
     }
 
     public nonisolated var reactions: any RoomReactions {
-        fatalError("Not yet implemented")
+        guard let _reactions else {
+            fatalError("Reactions are not enabled for this room")
+        }
+
+        return _reactions
     }
 
     public nonisolated var typing: any Typing {

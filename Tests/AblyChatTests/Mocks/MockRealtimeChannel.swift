@@ -8,6 +8,11 @@ final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
 
     var properties: ARTChannelProperties { .init(attachSerial: attachSerial, channelSerial: channelSerial) }
 
+    // I don't see why the nonisolated(unsafe) keyword would cause a problem when used for tests in this context.
+    nonisolated(unsafe) var lastMessagePublishedName: String?
+    nonisolated(unsafe) var lastMessagePublishedData: Any?
+    nonisolated(unsafe) var lastMessagePublishedExtras: (any ARTJsonCompatible)?
+
     init(
         name: String? = nil,
         properties: ARTChannelProperties = .init(),
@@ -199,8 +204,10 @@ final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
         fatalError("Not implemented")
     }
 
-    func publish(_: String?, data _: Any?, extras _: (any ARTJsonCompatible)?) {
-        fatalError("Not implemented")
+    func publish(_ name: String?, data: Any?, extras: (any ARTJsonCompatible)?) {
+        lastMessagePublishedName = name
+        lastMessagePublishedExtras = extras
+        lastMessagePublishedData = data
     }
 
     func publish(_: String?, data _: Any?, extras _: (any ARTJsonCompatible)?, callback _: ARTCallback? = nil) {

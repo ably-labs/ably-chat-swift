@@ -88,6 +88,6 @@ enum ReactionType: String, CaseIterable {
 
 extension Reaction {
     var displayedText: String {
-        ReactionType(rawValue: type)?.emoji ?? ReactionType.idk.emoji
+        type
     }
 }
