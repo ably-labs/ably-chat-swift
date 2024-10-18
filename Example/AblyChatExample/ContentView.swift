@@ -1,3 +1,4 @@
+import Ably
 import AblyChat
 import SwiftUI
 
@@ -11,10 +12,23 @@ struct ContentView: View {
         let screenHeight = UIScreen.main.bounds.height
     #endif
 
-    @State private var chatClient = MockChatClient(
+    // Can be replaced with your own room ID
+    private let roomID = "DemoRoomID"
+
+    // Set mode to `.live` if you wish to connect to actual instances of the Chat client in either Prod or Sandbox environments. Setting the mode to `.mock` will use the `MockChatClient`, and therefore simulate all features of the Chat app.
+    private let mode = Environment.mock
+    private enum Environment {
+        case mock
+        case live
+    }
+
+    @State private var mockChatClient = MockChatClient(
         realtime: MockRealtime.create(),
         clientOptions: ClientOptions()
     )
+
+    private let liveRealtime: ARTRealtime
+    @State private var liveChatClient: DefaultChatClient
 
     @State private var title = "Room"
     @State private var messages = [BasicListItem]()
@@ -24,8 +38,19 @@ struct ContentView: View {
     @State private var occupancyInfo = "Connections: 0"
     @State private var statusInfo = ""
 
+    // You only need to set `options.key` and `options.clientId` if your mode is set to `.live`. Otherwise, you can ignore this.
+    init() {
+        let options = ARTClientOptions()
+        options.key = ""
+        options.clientId = ""
+        liveRealtime = ARTRealtime(options: options)
+
+        _liveChatClient = State(initialValue: DefaultChatClient(realtime: liveRealtime, clientOptions: .init()))
+    }
+
     private func room() async throws -> Room {
-        try await chatClient.rooms.get(roomID: "Demo", options: .init())
+        let chosenChatClient: ChatClient = (mode == .mock) ? mockChatClient : liveChatClient
+        return try await chosenChatClient.rooms.get(roomID: roomID, options: .init(reactions: .init()))
     }
 
     private var sendTitle: String {
@@ -33,7 +58,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack {
+        let zStack = ZStack {
             VStack {
                 Text(title)
                     .font(.headline)
@@ -99,18 +124,23 @@ struct ContentView: View {
             }
         }
         .tryTask { try await setDefaultTitle() }
+        .tryTask { try await attachRoom() }
         .tryTask { try await showMessages() }
         .tryTask { try await showReactions() }
-        .tryTask { try await showPresence() }
-        .tryTask { try await showTypings() }
-        .tryTask { try await showOccupancy() }
-        .tryTask { try await showRoomStatus() }
+        if mode == .mock {
+            zStack.tryTask { try await showPresence() }
+                .tryTask { try await showTypings() }
+                .tryTask { try await showOccupancy() }
+                .tryTask { try await showRoomStatus() }
+        }
+
+        // NOTE: As we implement more features, move them out of the `if mode == .mock` block and into the main `zStack` block just above.
     }
 
     func sendButtonAction() {
         if newMessage.isEmpty {
             Task {
-                try await sendReaction(type: ReactionType.like.rawValue)
+                try await sendReaction(type: ReactionType.like.emoji)
             }
         } else {
             Task {
@@ -123,8 +153,21 @@ struct ContentView: View {
         title = try await "\(room().roomID)"
     }
 
+    func attachRoom() async throws {
+        try await room().attach()
+    }
+
     func showMessages() async throws {
-        for await message in try await room().messages.subscribe(bufferingPolicy: .unbounded) {
+        let messagesSubscription = try await room().messages.subscribe(bufferingPolicy: .unbounded)
+        let previousMessages = try await messagesSubscription.getPreviousMessages(params: .init())
+
+        for message in previousMessages.items {
+            withAnimation {
+                messages.append(BasicListItem(id: message.timeserial, title: message.clientID, text: message.text))
+            }
+        }
+
+        for await message in messagesSubscription {
             withAnimation {
                 messages.insert(BasicListItem(id: message.timeserial, title: message.clientID, text: message.text), at: 0)
             }
@@ -132,7 +175,8 @@ struct ContentView: View {
     }
 
     func showReactions() async throws {
-        for await reaction in try await room().reactions.subscribe(bufferingPolicy: .unbounded) {
+        let reactionSubscription = try await room().reactions.subscribe(bufferingPolicy: .unbounded)
+        for await reaction in reactionSubscription {
             withAnimation {
                 showReaction(reaction.displayedText)
             }

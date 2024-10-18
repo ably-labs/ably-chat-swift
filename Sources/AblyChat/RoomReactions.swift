@@ -17,3 +17,13 @@ public struct SendReactionParams: Sendable {
         self.headers = headers
     }
 }
+
+internal extension SendReactionParams {
+    // Same as `ARTDataQuery.asQueryItems` from ably-cocoa.
+    func asQueryItems() -> [String: String] {
+        var dict: [String: String] = [:]
+        dict["type"] = "\(type)"
+        dict["metadata"] = "\(metadata ?? [:])"
+        return dict
+    }
+}
