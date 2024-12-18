@@ -3,7 +3,7 @@ import Ably
 internal actor DefaultRoomLifecycleContributor: RoomLifecycleContributor, EmitsDiscontinuities, CustomDebugStringConvertible {
     internal nonisolated let channel: DefaultRoomLifecycleContributorChannel
     internal nonisolated let feature: RoomFeature
-    private var discontinuitySubscriptions: [Subscription<DiscontinuityEvent>] = []
+    private var discontinuitySubscriptions = SubscriptionStorage<DiscontinuityEvent>()
 
     internal init(channel: DefaultRoomLifecycleContributorChannel, feature: RoomFeature) {
         self.channel = channel
@@ -13,16 +13,11 @@ internal actor DefaultRoomLifecycleContributor: RoomLifecycleContributor, EmitsD
     // MARK: - Discontinuities
 
     internal func emitDiscontinuity(_ discontinuity: DiscontinuityEvent) {
-        for subscription in discontinuitySubscriptions {
-            subscription.emit(discontinuity)
-        }
+        discontinuitySubscriptions.emit(discontinuity)
     }
 
     internal func onDiscontinuity(bufferingPolicy: BufferingPolicy) -> Subscription<DiscontinuityEvent> {
-        let subscription = Subscription<DiscontinuityEvent>(bufferingPolicy: bufferingPolicy)
-        // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
-        discontinuitySubscriptions.append(subscription)
-        return subscription
+        return discontinuitySubscriptions.create(bufferingPolicy: bufferingPolicy)
     }
 
     // MARK: - CustomDebugStringConvertible

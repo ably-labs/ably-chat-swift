@@ -4,7 +4,7 @@ import Ably
 final actor MockFeatureChannel: FeatureChannel {
     let channel: RealtimeChannelProtocol
     // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
-    private var discontinuitySubscriptions: [Subscription<DiscontinuityEvent>] = []
+    private var discontinuitySubscriptions = SubscriptionStorage<DiscontinuityEvent>()
     private let resultOfWaitToBeAbleToPerformPresenceOperations: Result<Void, ARTErrorInfo>?
 
     init(
@@ -16,15 +16,11 @@ final actor MockFeatureChannel: FeatureChannel {
     }
 
     func onDiscontinuity(bufferingPolicy: BufferingPolicy) async -> Subscription<DiscontinuityEvent> {
-        let subscription = Subscription<DiscontinuityEvent>(bufferingPolicy: bufferingPolicy)
-        discontinuitySubscriptions.append(subscription)
-        return subscription
+        return discontinuitySubscriptions.create(bufferingPolicy: bufferingPolicy)
     }
 
     func emitDiscontinuity(_ discontinuity: DiscontinuityEvent) {
-        for subscription in discontinuitySubscriptions {
-            subscription.emit(discontinuity)
-        }
+        discontinuitySubscriptions.emit(discontinuity)
     }
 
     func waitToBeAbleToPerformPresenceOperations(requestedByFeature _: RoomFeature) async throws(ARTErrorInfo) {

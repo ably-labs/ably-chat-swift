@@ -9,7 +9,7 @@ actor MockRoomLifecycleManager: RoomLifecycleManager {
     private(set) var releaseCallCount = 0
     private let _roomStatus: RoomStatus?
     // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
-    private var subscriptions: [Subscription<RoomStatusChange>] = []
+    private var subscriptions = SubscriptionStorage<RoomStatusChange>()
 
     init(attachResult: Result<Void, ARTErrorInfo>? = nil, detachResult: Result<Void, ARTErrorInfo>? = nil, roomStatus: RoomStatus? = nil) {
         self.attachResult = attachResult
@@ -45,15 +45,11 @@ actor MockRoomLifecycleManager: RoomLifecycleManager {
     }
 
     func onRoomStatusChange(bufferingPolicy: BufferingPolicy) async -> Subscription<RoomStatusChange> {
-        let subscription = Subscription<RoomStatusChange>(bufferingPolicy: bufferingPolicy)
-        subscriptions.append(subscription)
-        return subscription
+        return subscriptions.create(bufferingPolicy: bufferingPolicy)
     }
 
     func emitStatusChange(_ statusChange: RoomStatusChange) {
-        for subscription in subscriptions {
-            subscription.emit(statusChange)
-        }
+        subscriptions.emit(statusChange)
     }
 
     func waitToBeAbleToPerformPresenceOperations(requestedByFeature _: RoomFeature) async throws(ARTErrorInfo) {

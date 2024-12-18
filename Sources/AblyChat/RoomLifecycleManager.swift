@@ -88,7 +88,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
     private var contributorAnnotations: ContributorAnnotations
     private var listenForStateChangesTask: Task<Void, Never>!
     // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
-    private var roomStatusChangeSubscriptions: [Subscription<RoomStatusChange>] = []
+    private var roomStatusChangeSubscriptions = SubscriptionStorage<RoomStatusChange>()
     private var operationResultContinuations = OperationResultContinuations()
 
     // MARK: - Initializers and `deinit`
@@ -330,15 +330,13 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
     }
 
     internal func onRoomStatusChange(bufferingPolicy: BufferingPolicy) -> Subscription<RoomStatusChange> {
-        let subscription: Subscription<RoomStatusChange> = .init(bufferingPolicy: bufferingPolicy)
-        roomStatusChangeSubscriptions.append(subscription)
-        return subscription
+        return roomStatusChangeSubscriptions.create(bufferingPolicy: bufferingPolicy)
     }
 
     #if DEBUG
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
         /// Supports the ``testsOnly_onRoomStatusChange()`` method.
-        private var statusChangeSubscriptions: [Subscription<StatusChange>] = []
+        private var statusChangeSubscriptions = SubscriptionStorage<StatusChange>()
 
         internal struct StatusChange {
             internal var current: Status
@@ -347,15 +345,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
 
         /// Allows tests to subscribe to changes to the manager’s internal status (which exposes more cases and additional metadata, compared to the ``RoomStatus`` exposed by ``onRoomStatusChange(bufferingPolicy:)``).
         internal func testsOnly_onStatusChange() -> Subscription<StatusChange> {
-            let subscription: Subscription<StatusChange> = .init(bufferingPolicy: .unbounded)
-            statusChangeSubscriptions.append(subscription)
-            return subscription
-        }
-
-        internal func emitStatusChange(_ change: StatusChange) {
-            for subscription in statusChangeSubscriptions {
-                subscription.emit(change)
-            }
+            return statusChangeSubscriptions.create(bufferingPolicy: .unbounded)
         }
     #endif
 
@@ -368,19 +358,13 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
         // Avoid a double-emit of room status when changing between `Status` values that map to the same `RoomStatus`; e.g. when changing from `.suspendedAwaitingStartOfRetryOperation` to `.suspended`.
         if new.toRoomStatus != previous.toRoomStatus {
             let statusChange = RoomStatusChange(current: status.toRoomStatus, previous: previous.toRoomStatus)
-            emitRoomStatusChange(statusChange)
+            roomStatusChangeSubscriptions.emit(statusChange)
         }
 
         #if DEBUG
             let statusChange = StatusChange(current: status, previous: previous)
-            emitStatusChange(statusChange)
+            statusChangeSubscriptions.emit(statusChange)
         #endif
-    }
-
-    private func emitRoomStatusChange(_ change: RoomStatusChange) {
-        for subscription in roomStatusChangeSubscriptions {
-            subscription.emit(change)
-        }
     }
 
     // MARK: - Handling contributor state changes
@@ -388,7 +372,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
     #if DEBUG
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
         /// Supports the ``testsOnly_subscribeToHandledContributorStateChanges()`` method.
-        private var stateChangeHandledSubscriptions: [Subscription<ARTChannelStateChange>] = []
+        private var stateChangeHandledSubscriptions = SubscriptionStorage<ARTChannelStateChange>()
 
         /// Returns a subscription which emits the contributor state changes that have been handled by the manager.
         ///
@@ -401,9 +385,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
         /// - the manager has recorded all transient disconnect timeouts provoked by the state change (you can retrieve this information using ``testsOnly_hasTransientDisconnectTimeout(for:) or ``testsOnly_idOfTransientDisconnectTimeout(for:)``)
         /// - the manager has performed all transient disconnect timeout cancellations provoked by the state change (you can retrieve this information using ``testsOnly_hasTransientDisconnectTimeout(for:) or ``testsOnly_idOfTransientDisconnectTimeout(for:)``)
         internal func testsOnly_subscribeToHandledContributorStateChanges() -> Subscription<ARTChannelStateChange> {
-            let subscription = Subscription<ARTChannelStateChange>(bufferingPolicy: .unbounded)
-            stateChangeHandledSubscriptions.append(subscription)
-            return subscription
+            return stateChangeHandledSubscriptions.create(bufferingPolicy: .unbounded)
         }
 
         internal func testsOnly_pendingDiscontinuityEvent(for contributor: Contributor) -> DiscontinuityEvent? {
@@ -424,7 +406,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
 
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
         /// Supports the ``testsOnly_subscribeToHandledTransientDisconnectTimeouts()`` method.
-        private var transientDisconnectTimeoutHandledSubscriptions: [Subscription<UUID>] = []
+        private var transientDisconnectTimeoutHandledSubscriptions = SubscriptionStorage<UUID>()
 
         /// Returns a subscription which emits the IDs of the transient disconnect timeouts that have been handled by the manager.
         ///
@@ -432,9 +414,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
         ///
         /// - the manager has performed all status changes provoked by the completion of this timeout (which may be none, if the timeout gets cancelled)
         internal func testsOnly_subscribeToHandledTransientDisconnectTimeouts() -> Subscription<UUID> {
-            let subscription = Subscription<UUID>(bufferingPolicy: .unbounded)
-            transientDisconnectTimeoutHandledSubscriptions.append(subscription)
-            return subscription
+            return transientDisconnectTimeoutHandledSubscriptions.create(bufferingPolicy: .unbounded)
         }
     #endif
 
@@ -560,18 +540,14 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
 
         #if DEBUG
             logger.log(message: "Emitting state change handled event for \(stateChange)", level: .debug)
-            for subscription in stateChangeHandledSubscriptions {
-                subscription.emit(stateChange)
-            }
+            stateChangeHandledSubscriptions.emit(stateChange)
         #endif
     }
 
     #if DEBUG
         private func emitTransientDisconnectTimeoutHandledEventForTimeoutWithID(_ id: UUID) {
             logger.log(message: "Emitting transient disconnect timeout handled event for \(id)", level: .debug)
-            for subscription in transientDisconnectTimeoutHandledSubscriptions {
-                subscription.emit(id)
-            }
+            transientDisconnectTimeoutHandledSubscriptions.emit(id)
         }
     #endif
 
@@ -638,13 +614,11 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
 
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
         /// Supports the ``testsOnly_subscribeToOperationWaitEvents()`` method.
-        private var operationWaitEventSubscriptions: [Subscription<OperationWaitEvent>] = []
+        private var operationWaitEventSubscriptions = SubscriptionStorage<OperationWaitEvent>()
 
         /// Returns a subscription which emits an event each time one room lifecycle operation is going to wait for another to complete.
         internal func testsOnly_subscribeToOperationWaitEvents() -> Subscription<OperationWaitEvent> {
-            let subscription = Subscription<OperationWaitEvent>(bufferingPolicy: .unbounded)
-            operationWaitEventSubscriptions.append(subscription)
-            return subscription
+            return operationWaitEventSubscriptions.create(bufferingPolicy: .unbounded)
         }
     #endif
 
@@ -693,9 +667,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
 
                 #if DEBUG
                     let operationWaitEvent = OperationWaitEvent(waitingOperationID: requester.waitingOperationID, waitedOperationID: waitedOperationID)
-                    for subscription in operationWaitEventSubscriptions {
-                        subscription.emit(operationWaitEvent)
-                    }
+                    operationWaitEventSubscriptions.emit(operationWaitEvent)
                 #endif
             }
 
@@ -1265,9 +1237,7 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
             let subscription = onRoomStatusChange(bufferingPolicy: .unbounded)
             logger.log(message: "waitToBeAbleToPerformPresenceOperations waiting for status change", level: .debug)
             #if DEBUG
-                for subscription in statusChangeWaitEventSubscriptions {
-                    subscription.emit(.init())
-                }
+            statusChangeWaitEventSubscriptions.emit(.init())
             #endif
             let nextRoomStatusChange = await (subscription.first { _ in true })
             logger.log(message: "waitToBeAbleToPerformPresenceOperations got status change \(String(describing: nextRoomStatusChange))", level: .debug)
@@ -1295,13 +1265,11 @@ internal actor DefaultRoomLifecycleManager<Contributor: RoomLifecycleContributor
 
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
         /// Supports the ``testsOnly_subscribeToStatusChangeWaitEvents()`` method.
-        private var statusChangeWaitEventSubscriptions: [Subscription<StatusChangeWaitEvent>] = []
+        private var statusChangeWaitEventSubscriptions = SubscriptionStorage<StatusChangeWaitEvent>()
 
         /// Returns a subscription which emits an event each time ``waitToBeAbleToPerformPresenceOperations(requestedByFeature:)`` is going to wait for a room status change.
         internal func testsOnly_subscribeToStatusChangeWaitEvents() -> Subscription<StatusChangeWaitEvent> {
-            let subscription = Subscription<StatusChangeWaitEvent>(bufferingPolicy: .unbounded)
-            statusChangeWaitEventSubscriptions.append(subscription)
-            return subscription
+            return statusChangeWaitEventSubscriptions.create(bufferingPolicy: .unbounded)
         }
     #endif
 }

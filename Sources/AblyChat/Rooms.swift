@@ -139,20 +139,16 @@ internal actor DefaultRooms<RoomFactory: AblyChat.RoomFactory>: Rooms {
 
         // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
         /// Supports the ``testsOnly_subscribeToOperationWaitEvents()`` method.
-        private var operationWaitEventSubscriptions: [Subscription<OperationWaitEvent>] = []
+        private var operationWaitEventSubscriptions = SubscriptionStorage<OperationWaitEvent>()
 
         /// Returns a subscription which emits an event each time one operation is going to wait for another to complete.
         internal func testsOnly_subscribeToOperationWaitEvents() -> Subscription<OperationWaitEvent> {
-            let subscription = Subscription<OperationWaitEvent>(bufferingPolicy: .unbounded)
-            operationWaitEventSubscriptions.append(subscription)
-            return subscription
+            return operationWaitEventSubscriptions.create(bufferingPolicy: .unbounded)
         }
 
         private func emitOperationWaitEvent(waitingOperationType: OperationType, waitedOperationType: OperationType) {
             let operationWaitEvent = OperationWaitEvent(waitingOperationType: waitingOperationType, waitedOperationType: waitedOperationType)
-            for subscription in operationWaitEventSubscriptions {
-                subscription.emit(operationWaitEvent)
-            }
+            operationWaitEventSubscriptions.emit(operationWaitEvent)
         }
     #endif
 

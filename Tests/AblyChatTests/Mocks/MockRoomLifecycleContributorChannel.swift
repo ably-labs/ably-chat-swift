@@ -9,7 +9,7 @@ final actor MockRoomLifecycleContributorChannel: RoomLifecycleContributorChannel
     var state: ARTRealtimeChannelState
     var errorReason: ARTErrorInfo?
     // TODO: clean up old subscriptions (https://github.com/ably-labs/ably-chat-swift/issues/36)
-    private var subscriptions: [Subscription<ARTChannelStateChange>] = []
+    private var subscriptions = SubscriptionStorage<ARTChannelStateChange>()
 
     private(set) var attachCallCount = 0
     private(set) var detachCallCount = 0
@@ -108,8 +108,7 @@ final actor MockRoomLifecycleContributorChannel: RoomLifecycleContributorChannel
     }
 
     func subscribeToState() -> Subscription<ARTChannelStateChange> {
-        let subscription = Subscription<ARTChannelStateChange>(bufferingPolicy: .unbounded)
-        subscriptions.append(subscription)
+        let subscription = subscriptions.create(bufferingPolicy: .unbounded)
 
         switch subscribeToStateBehavior {
         case .justAddSubscription:
@@ -122,8 +121,6 @@ final actor MockRoomLifecycleContributorChannel: RoomLifecycleContributorChannel
     }
 
     func emitStateChange(_ stateChange: ARTChannelStateChange) {
-        for subscription in subscriptions {
-            subscription.emit(stateChange)
-        }
+        subscriptions.emit(stateChange)
     }
 }
