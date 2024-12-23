@@ -2,15 +2,14 @@ import Ably
 import AblyChat
 
 final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
-    var presence: ARTRealtimePresenceProtocol {
-        fatalError("Not implemented")
-    }
-
     private let attachSerial: String?
     private let channelSerial: String?
     private let _name: String?
+    private let mockPresence: MockRealtimePresence!
 
     var properties: ARTChannelProperties { .init(attachSerial: attachSerial, channelSerial: channelSerial) }
+
+    var presence: ARTRealtimePresenceProtocol { mockPresence }
 
     // I don't see why the nonisolated(unsafe) keyword would cause a problem when used for tests in this context.
     nonisolated(unsafe) var lastMessagePublishedName: String?
@@ -32,7 +31,8 @@ final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
         state _: ARTRealtimeChannelState = .suspended,
         attachResult: AttachOrDetachResult? = nil,
         detachResult: AttachOrDetachResult? = nil,
-        messageToEmitOnSubscribe: MessageToEmit? = nil
+        messageToEmitOnSubscribe: MessageToEmit? = nil,
+        mockPresence: MockRealtimePresence! = nil
     ) {
         _name = name
         self.attachResult = attachResult
@@ -40,6 +40,7 @@ final class MockRealtimeChannel: NSObject, RealtimeChannelProtocol {
         self.messageToEmitOnSubscribe = messageToEmitOnSubscribe
         attachSerial = properties.attachSerial
         channelSerial = properties.channelSerial
+        self.mockPresence = mockPresence
     }
 
     /// A threadsafe counter that starts at zero.

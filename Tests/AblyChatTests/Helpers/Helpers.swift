@@ -21,3 +21,21 @@ func isChatError(_ maybeError: (any Error)?, withCodeAndStatusCode codeAndStatus
             return ablyError.message == message
         }()
 }
+
+extension ARTPresenceMessage {
+    convenience init(clientId: String, data: Any? = [:], timestamp: Date = Date()) {
+        self.init()
+        self.clientId = clientId
+        self.data = data
+        self.timestamp = timestamp
+    }
+}
+
+extension Array where Element == PresenceEventType {
+    static let all = [
+        PresenceEventType.present,
+        PresenceEventType.enter,
+        PresenceEventType.leave,
+        PresenceEventType.update
+    ]
+}
